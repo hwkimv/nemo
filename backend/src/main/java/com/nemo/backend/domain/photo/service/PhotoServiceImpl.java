@@ -294,7 +294,11 @@ public class PhotoServiceImpl implements PhotoService {
     @Transactional(readOnly = true)
     public SelectedPhotosDownloadUrlsResponse getDownloadUrls(Long userId, List<Long> photoIdList) {
         if (photoIdList == null || photoIdList.isEmpty()) {
-            throw new ApiException(ErrorCode.INVALID_ARGUMENT, "photoIdList는 비어 있을 수 없습니다.");
+            // ✅ 명세: INVALID_REQUEST
+            throw new ApiException(
+                    ErrorCode.INVALID_REQUEST,
+                    "photoIdList는 비어 있을 수 없습니다."
+            );
         }
 
         // 중복 제거
@@ -307,10 +311,10 @@ public class PhotoServiceImpl implements PhotoService {
 
         List<PhotoDownloadUrlDto> items = photos.stream()
                 .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                // ✅ 현재는 "내 사진 탭" 기준으로, 소유자만 다운로드 가능하게
-                .filter(p -> userId.equals(p.getUserId()))
+                // ✅ 권한: 내 사진 + 공유 앨범(ACCEPTED) 멤버
+                .filter(p -> hasPhotoAccess(userId, p))
                 .map(p -> {
-                    String downloadUrl = p.getImageUrl(); // 명세상 downloadUrl – 원본 이미지 URL
+                    String downloadUrl = p.getImageUrl();
                     String filename = buildDownloadFilename(p.getImageUrl(), p.getId());
                     Long fileSize = resolveFileSizeFromImageUrl(p.getImageUrl());
 
@@ -324,13 +328,18 @@ public class PhotoServiceImpl implements PhotoService {
                 .toList();
 
         if (items.isEmpty()) {
-            throw new ApiException(ErrorCode.FORBIDDEN, "다운로드 가능한 사진이 없습니다.");
+            // ✅ 명세: NO_DOWNLOADABLE_PHOTOS(404)
+            throw new ApiException(
+                    ErrorCode.NO_DOWNLOADABLE_PHOTOS,
+                    "다운로드 가능한 사진이 없습니다."
+            );
         }
 
         return SelectedPhotosDownloadUrlsResponse.builder()
                 .photos(items)
                 .build();
     }
+
 
     /** download용 파일 이름 생성 – URL 확장자 기준, 없으면 .jpg */
     private String buildDownloadFilename(String imageUrl, Long photoId) {
