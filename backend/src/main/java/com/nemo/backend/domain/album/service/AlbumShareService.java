@@ -278,6 +278,11 @@ public class AlbumShareService {
         EffectiveRole actorRole = resolveEffectiveRole(album, meId);
         EffectiveRole targetRole = resolveEffectiveRoleForShare(album, share);
 
+        // 🔒 CO_OWNER 는 다른 사용자를 CO_OWNER 로 승격시킬 수 없다
+        if (actorRole == EffectiveRole.CO_OWNER && newRole == Role.CO_OWNER) {
+            throw new ApiException(ErrorCode.FORBIDDEN, "CO_OWNER 는 다른 사용자를 CO_OWNER 로 변경할 수 없습니다.");
+        }
+
         if (!canChangeMemberRole(actorRole, targetRole)) {
             throw new ApiException(ErrorCode.FORBIDDEN, "공유 멤버 권한을 변경할 수 없습니다.");
         }
@@ -285,6 +290,7 @@ public class AlbumShareService {
         share.setRole(newRole);
         return share;
     }
+
 
     /**
      * 공유 해제 / 강퇴
