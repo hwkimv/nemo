@@ -1,5 +1,5 @@
 // com.nemo.backend.domain.photo.service.S3PhotoStorage
-package com.nemo.backend.domain.photo.service;
+        package com.nemo.backend.domain.photo.service;
 
 import com.nemo.backend.global.exception.ApiException;
 import com.nemo.backend.global.exception.ErrorCode;
@@ -13,18 +13,18 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 
-import javax.imageio.IIOImage;
-import javax.imageio.ImageIO;
-import javax.imageio.ImageWriteParam;
-import javax.imageio.ImageWriter;
+import javax.imageio.*;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -86,67 +86,100 @@ public class S3PhotoStorage implements PhotoStorage {
 
     @Override
     public String store(MultipartFile file) throws Exception {
-        byte[] data = file.getBytes();
+        long requestSize = file.getSize();
+        String originalName = file.getOriginalFilename();
+
+        // 헤더 일부만 읽어서 HTML/JSON, MIME 판별
+        byte[] head = readHeadBytes(file, 64 * 1024);
 
         // HTML/JSON 차단
-        if (looksLikeHtmlOrJson(data)) {
+        if (looksLikeHtmlOrJson(head)) {
             throw new ApiException(ErrorCode.INVALID_ARGUMENT, "이미지/영상 파일이 아닙니다(HTML/JSON 감지)");
         }
 
         String reported = file.getContentType();
-        String detected = detectMime(data);
-        String mime = chooseMime(reported, detected, file.getOriginalFilename());
+        String detected = detectMime(head);
+        String mime = chooseMime(reported, detected, originalName);
 
         // LOG: 업로드 들어온 원본 정보
         log.info("[S3PhotoStorage] multipart upload start: name={}, requestSize={} bytes, "
                         + "reportedMime={}, detectedMime={}",
-                file.getOriginalFilename(),
-                file.getSize(),
+                originalName,
+                requestSize,
                 reported,
                 detected
         );
 
-        int originalSize = data.length; // LOG용
-
-        // 이미지면 WEBP → JPEG → PNG 순으로 압축/변환 Best Effort
+        // 이미지면 압축/변환, 아니면 스트리밍 업로드
         if (isImageMime(mime)) {
-            CompressedResult result = compressImageBestEffort(data, file.getOriginalFilename(), mime);
+            byte[] data = file.getBytes();
+            int originalSize = data.length;
+
+            CompressedResult result = compressImageBestEffort(data, originalName, mime);
             data = result.bytes;
             mime = result.mime;
 
             log.info("[S3PhotoStorage] multipart image result: name={}, originalSize={} bytes, "
                             + "finalSize={} bytes, targetMime={}",
-                    file.getOriginalFilename(),
+                    originalName,
                     originalSize,
                     data.length,
                     mime
             );
-        }
 
-        String key = buildKey(mime, file.getOriginalFilename());
+            String key = buildKey(mime, originalName);
 
-        try {
-            PutObjectRequest req = PutObjectRequest.builder()
-                    .bucket(bucket)
-                    .key(key)
-                    .contentType(mime)
-                    .contentDisposition("inline; filename=\"" + safeFilename(file.getOriginalFilename()) + "\"")
-                    .build();
+            try {
+                PutObjectRequest req = PutObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .contentType(mime)
+                        .contentDisposition("inline; filename=\"" + safeFilename(originalName) + "\"")
+                        .build();
 
-            s3Client.putObject(req, RequestBody.fromBytes(data));
+                s3Client.putObject(req, RequestBody.fromBytes(data));
 
-            // LOG: 최종 업로드 완료
-            log.info("[S3PhotoStorage] multipart upload done: key={}, size={} bytes, mime={}",
-                    key, data.length, mime);
+                // LOG: 최종 업로드 완료
+                log.info("[S3PhotoStorage] multipart upload done: key={}, size={} bytes, mime={}",
+                        key, data.length, mime);
 
-            return key;
+                return key;
 
-        } catch (S3Exception e) {
-            throw new StorageException("S3 업로드 실패: " + e.awsErrorDetails().errorMessage(), e);
-        } catch (SdkClientException e) {
-            throw new StorageException("S3 클라이언트 오류: " + e.getMessage(), e);
-        } catch (Exception e) {
-            throw new StorageException("파일 저장 실패: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
+            } catch (S3Exception e) {
+                throw new StorageException("S3 업로드 실패: " + e.awsErrorDetails().errorMessage(), e);
+            } catch (SdkClientException e) {
+                throw new StorageException("S3 클라이언트 오류: " + e.getMessage(), e);
+            } catch (Exception e) {
+                throw new StorageException("파일 저장 실패: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
+            }
+        } else {
+            // 이미지가 아니면 InputStream 스트리밍 방식으로 업로드
+            String key = buildKey(mime, originalName);
+
+            try {
+                PutObjectRequest req = PutObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .contentType(mime)
+                        .contentDisposition("inline; filename=\"" + safeFilename(originalName) + "\"")
+                        .build();
+
+                try (InputStream in = file.getInputStream()) {
+                    s3Client.putObject(req, RequestBody.fromInputStream(in, requestSize));
+                }
+
+                log.info("[S3PhotoStorage] multipart upload(stream) done: key={}, size={} bytes, mime={}",
+                        key, requestSize, mime);
+
+                return key;
+
+            } catch (S3Exception e) {
+                throw new StorageException("S3 업로드 실패: " + e.awsErrorDetails().errorMessage(), e);
+            } catch (SdkClientException e) {
+                throw new StorageException("S3 클라이언트 오류: " + e.getMessage(), e);
+            } catch (Exception e) {
+                throw new StorageException("파일 저장 실패: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
+            }
         }
     }
 
@@ -215,7 +248,6 @@ public class S3PhotoStorage implements PhotoStorage {
             throw new StorageException("파일 저장 실패: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
         }
     }
-
 
     private String buildKey(String mime, String originalName) {
         String ext = extensionForMime(mime, originalName);
@@ -315,30 +347,74 @@ public class S3PhotoStorage implements PhotoStorage {
 
     // ---------- 여기부터 압축 Best Effort 로직 ----------
     /**
-     * 1) 리사이즈 (긴 변 2048px 기준)
-     * 2) WEBP(품질 0.8) 시도
-     * 3) WEBP가 에러나거나 이득이 거의 없으면 JPEG(품질 0.85) 시도
-     * 4) 그래도 실패/이득 없음 → PNG 시도
-     * 5) 끝까지 안 되면 원본 + 원래 mime 유지
+     * 1) (큰 해상도인 경우) 서브샘플링으로 축소된 해상도로 디코딩
+     * 2) 긴 변이 MAX_LONG_EDGE 보다 크면 추가 리사이즈
+     * 3) WEBP(품질 0.8) 시도
+     * 4) WEBP가 에러나거나 이득이 거의 없으면 JPEG(품질 0.85) 시도
+     * 5) 그래도 실패/이득 없음 → PNG 시도
+     * 6) 끝까지 안 되면 원본 + 원래 mime 유지
      */
     private CompressedResult compressImageBestEffort(byte[] original, String originalName, String originalMime) {
         int originalSize = original.length;
-        BufferedImage image;
-        try (ByteArrayInputStream in = new ByteArrayInputStream(original)) {
-            image = ImageIO.read(in);
+        BufferedImage work;
+
+        // 1) 원본을 서브샘플링해서 디코딩 (초대형 이미지 OOM 방지)
+        try (ImageInputStream iis =
+                     ImageIO.createImageInputStream(new ByteArrayInputStream(original))) {
+
+            if (iis == null) {
+                throw new StorageException("이미지 스트림 생성 실패: " + originalName, null);
+            }
+
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (!readers.hasNext()) {
+                throw new ApiException(ErrorCode.INVALID_ARGUMENT,
+                        "지원하지 않는 이미지 형식입니다: " + originalName);
+            }
+
+            javax.imageio.ImageReader reader = readers.next();
+            try {
+                reader.setInput(iis, true, true);
+
+                int w = reader.getWidth(0);
+                int h = reader.getHeight(0);
+                int longEdge = Math.max(w, h);
+
+                // 말도 안 되게 큰 해상도는 아예 차단 (선택적)
+                if (longEdge > 20_000) {
+                    throw new ApiException(ErrorCode.INVALID_ARGUMENT,
+                            "이미지 해상도가 너무 큽니다 (최대 20000px): " + originalName);
+                }
+
+                int subsample = 1;
+                if (longEdge > MAX_LONG_EDGE) {
+                    subsample = (int) Math.ceil((double) longEdge / MAX_LONG_EDGE);
+                }
+
+                ImageReadParam param = reader.getDefaultReadParam();
+                if (subsample > 1) {
+                    param.setSourceSubsampling(subsample, subsample, 0, 0);
+                }
+
+                BufferedImage decoded = reader.read(0, param);
+                if (decoded == null) {
+                    throw new ApiException(ErrorCode.INVALID_ARGUMENT,
+                            "이미지 파일로 읽을 수 없습니다: " + originalName);
+                }
+
+                work = resizeIfNecessary(decoded, originalName);
+
+            } finally {
+                reader.dispose();
+            }
+
+        } catch (ApiException e) {
+            throw e;
         } catch (Exception e) {
             throw new StorageException("이미지 디코딩 실패: " + originalName + " / " + e.getMessage(), e);
         }
 
-        if (image == null) {
-            throw new ApiException(ErrorCode.INVALID_ARGUMENT,
-                    "이미지 파일로 읽을 수 없습니다: " + originalName);
-        }
-
-        // 0) 너무 크면 리사이즈
-        BufferedImage work = resizeIfNecessary(image, originalName);
-
-        // 1) WEBP 우선 시도
+        // 2) WEBP 우선 시도
         try {
             byte[] webp = encodeImage(work, "webp", 0.80f);
             if (webp != null && webp.length > 0) {
@@ -357,7 +433,7 @@ public class S3PhotoStorage implements PhotoStorage {
             log.warn("WEBP 압축 실패, JPEG 시도: {} / {}", originalName, e.getMessage());
         }
 
-        // 2) JPEG 시도 (투명도 있으면 흰 배경)
+        // 3) JPEG 시도 (투명도 있으면 흰 배경)
         try {
             BufferedImage rgbImage = work;
             if (work.getType() != BufferedImage.TYPE_INT_RGB) {
@@ -386,7 +462,7 @@ public class S3PhotoStorage implements PhotoStorage {
             log.warn("JPEG 압축 실패, PNG 시도: {} / {}", originalName, e.getMessage());
         }
 
-        // 3) PNG 시도 (대부분의 사진에서는 보통 손해라 거의 안 쓸 가능성 높음)
+        // 4) PNG 시도 (대부분의 사진에서는 보통 손해라 거의 안 쓸 가능성 높음)
         try {
             byte[] png = encodeImage(work, "png", null);
             if (png != null && png.length > 0) {
@@ -405,7 +481,7 @@ public class S3PhotoStorage implements PhotoStorage {
             log.warn("PNG 압축 실패, 원본 업로드: {} / {}", originalName, e.getMessage());
         }
 
-        // 4) 전부 실패 or 이득 없음 → 원본 그대로
+        // 5) 전부 실패 or 이득 없음 → 원본 그대로
         log.info("압축/변환해도 이득이 없어 원본 유지: {} (size={} bytes, mime={})",
                 originalName, originalSize, originalMime);
         String finalMime = isGood(originalMime) ? originalMime : "application/octet-stream";
@@ -447,7 +523,7 @@ public class S3PhotoStorage implements PhotoStorage {
         ImageOutputStream ios = null;
         try {
             // 1) 포맷 이름으로 writer 찾기
-            var writers = ImageIO.getImageWritersByFormatName(formatName);
+            Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName(formatName);
             // 2) webp인 경우 MIME 기반으로 한 번 더 시도
             if (!writers.hasNext() && "webp".equalsIgnoreCase(formatName)) {
                 writers = ImageIO.getImageWritersByMIMEType("image/webp");
@@ -462,12 +538,12 @@ public class S3PhotoStorage implements PhotoStorage {
                 log.info("[WEBP] Using writer implementation: {}", writer.getClass().getName());
             }
 
-            ImageWriteParam param = writer.getDefaultWriteParam();
+            javax.imageio.ImageWriteParam param = writer.getDefaultWriteParam();
 
             if (quality != null && param.canWriteCompressed()) {
-                param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
 
-                // ★ compressionType 먼저 지정
+                // compressionType 먼저 지정
                 String[] types = param.getCompressionTypes();
                 if (types != null && types.length > 0) {
                     String chosen = types[0];
@@ -493,7 +569,7 @@ public class S3PhotoStorage implements PhotoStorage {
                 log.info("[WEBP] Encoded size={} bytes (quality={})", encoded.length, quality);
             }
 
-            // ★ 여기서 0바이트면 실패로 간주해서 예외 던짐
+            // 0바이트면 실패로 간주
             if (encoded.length == 0) {
                 throw new IllegalStateException("Encoded image is empty for format: " + formatName);
             }
@@ -503,6 +579,22 @@ public class S3PhotoStorage implements PhotoStorage {
             if (ios != null) ios.close();
             if (writer != null) writer.dispose();
             out.close();
+        }
+    }
+
+    private byte[] readHeadBytes(MultipartFile file, int maxBytes) throws Exception {
+        try (InputStream in = file.getInputStream();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[4096];
+            int total = 0;
+            int r;
+            while ((r = in.read(buf)) != -1 && total < maxBytes) {
+                int len = Math.min(r, maxBytes - total);
+                out.write(buf, 0, len);
+                total += len;
+                if (total >= maxBytes) break;
+            }
+            return out.toByteArray();
         }
     }
 
