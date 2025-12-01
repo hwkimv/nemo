@@ -372,12 +372,18 @@ public class AlbumService {
             throw new ApiException(ErrorCode.FORBIDDEN, "해당 앨범을 삭제할 권한이 없습니다.");
         }
 
+        // ✅ 1) 이 앨범을 즐겨찾기한 기록 전부 삭제
+        albumFavoriteRepository.deleteByAlbumId(albumId);
+
+        // ✅ 2) 앨범-사진 연관관계 정리
         if (album.getPhotos() != null && !album.getPhotos().isEmpty()) {
             album.getPhotos().clear();
         }
 
+        // ✅ 3) 앨범 삭제
         albumRepository.delete(album);
     }
+
 
     // 6) 앨범 썸네일 생성/지정
     @Transactional

@@ -116,27 +116,34 @@ public class AuthService {
     // 3) 로그아웃 (명세 반영)
     // =======================
     public void logout(Long userId, String refreshToken) {
+
+        // ✅ 1) 리프레시 토큰이 아예 없으면 → 할 일이 없으니 그냥 반환 (에러 X)
         if (refreshToken == null || refreshToken.isBlank()) {
-            throw new ApiException(ErrorCode.INVALID_REQUEST, "refreshToken 은 필수입니다.");
+            return; // 이미 사실상 로그아웃 상태
         }
 
         RefreshToken stored = refreshTokenRepository.findByToken(refreshToken)
-                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_TOKEN));
+                .orElse(null);
 
-        // 다른 유저의 토큰이면 무효
-        if (!stored.getUserId().equals(userId)) {
+        // ✅ 2) DB에 해당 토큰이 없으면 → 이미 삭제된 상태이므로 그냥 성공으로 처리
+        if (stored == null) {
+            return;
+        }
+
+        // ✅ 3) accessToken 이 있었다면, 그 사용자와 refreshToken 소유자가 일치하는지 검증
+        if (userId != null && !stored.getUserId().equals(userId)) {
             throw new ApiException(ErrorCode.INVALID_TOKEN);
         }
 
         LocalDateTime now = LocalDateTime.now();
 
-        // 만료된 토큰이면 삭제 후 에러
+        // ✅ 4) 만료된 토큰이면 그냥 삭제하고 끝 (에러 안 던짐)
         if (stored.getExpiry() == null || !stored.getExpiry().isAfter(now)) {
             refreshTokenRepository.delete(stored);
-            throw new ApiException(ErrorCode.INVALID_TOKEN);
+            return;
         }
 
-        // 정상 토큰이면 해당 토큰만 삭제
+        // ✅ 5) 정상 토큰이면 해당 토큰만 삭제
         refreshTokenRepository.delete(stored);
     }
 
