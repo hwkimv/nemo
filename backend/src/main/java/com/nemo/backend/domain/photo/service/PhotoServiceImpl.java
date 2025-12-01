@@ -10,6 +10,7 @@ import com.nemo.backend.domain.photo.entity.Photo;
 import com.nemo.backend.domain.photo.repository.PhotoRepository;
 import com.nemo.backend.domain.album.entity.AlbumShare;
 import com.nemo.backend.domain.album.repository.AlbumShareRepository;
+import com.nemo.backend.domain.storage.service.StorageService;
 import com.nemo.backend.global.exception.ApiException;
 import com.nemo.backend.global.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
@@ -61,17 +62,18 @@ public class PhotoServiceImpl implements PhotoService {
     private final PhotoStorage storage;
     private final AlbumShareRepository albumShareRepository;
     private final String publicBaseUrl;
+    private final StorageService storageService;
 
     public PhotoServiceImpl(PhotoRepository photoRepository,
                             PhotoStorage storage,
                             AlbumShareRepository albumShareRepository,
-                            @Value("${app.public-base-url:http://localhost:8080}") String publicBaseUrl) {
+                            @Value("${app.public-base-url:http://localhost:8080}") String publicBaseUrl, StorageService storageService) {
         this.photoRepository = photoRepository;
         this.storage = storage;
         this.albumShareRepository = albumShareRepository;
+        this.storageService = storageService;
         this.publicBaseUrl = publicBaseUrl.replaceAll("/+$", "");
     }
-
 
     private String toPublicUrl(String key) {
         return String.format("%s/files/%s", publicBaseUrl, key);
@@ -98,6 +100,8 @@ public class PhotoServiceImpl implements PhotoService {
                 (image != null && !image.isEmpty()),
                 (image != null ? image.getOriginalFilename() : null)
         );
+
+        storageService.checkPhotoLimitOrThrow(userId);
 
         if ((qrUrlOrPayload == null || qrUrlOrPayload.isBlank()) && (image == null || image.isEmpty())) {
             throw new ApiException(ErrorCode.INVALID_ARGUMENT, "image 또는 qrUrl/qrCode 중 하나는 필수입니다.");
@@ -227,10 +231,8 @@ public class PhotoServiceImpl implements PhotoService {
             // 명세상 403 Forbidden 사용 :contentReference[oaicite:4]{index=4}
             throw new ApiException(ErrorCode.FORBIDDEN, "해당 사진에 접근할 권한이 없습니다.");
         }
-
         return new PhotoResponseDto(photo);
     }
-
 
     // ========================================================
     // 5) 사진 상세 정보 수정 (촬영일시, 위치, 브랜드, 메모)
@@ -401,7 +403,7 @@ public class PhotoServiceImpl implements PhotoService {
 
     // ======================================================================
     // 아래부터는 QR 파싱 / HTTP 유틸 / life4cut 전용 로직
-    //  (기존 로직 그대로 유지)
+    // 🔥 요청대로 알고리즘/로직은 그대로 두고, 사용처만 위에서 조정
     // ======================================================================
 
     private AssetPair fetchAssetsFromQrPayload(String startUrl) {
@@ -479,7 +481,8 @@ public class PhotoServiceImpl implements PhotoService {
                             if (foundImage == null) foundImage = publicUrl;
                             if (foundThumb == null)  foundThumb  = publicUrl;
                         } else if (ct.startsWith("video/")) {
-                            // ✅ 영상도 받아서 저장 (기존 로직 그대로)
+                            // 영상도 받아서 스토리지에 저장해 두지만,
+                            // 현재 명세상 API/엔티티에는 videoUrl을 노출하거나 저장하지 않는다.
                             String key = storage.storeBytes(
                                     data,
                                     filenameFromHeadersOrUrl(url, cd, ct),
@@ -1185,7 +1188,6 @@ public class PhotoServiceImpl implements PhotoService {
         if (s.contains("photoism")) return "포토이즘";
         if (s.contains("signature")) return "포토시그니쳐";
         if (s.contains("twin")) return "트윈포토";
-        if (s.contains("photogray") || s.contains("pgshort") || s.contains("pg-qr-resource")) return "포토그레이";
         return "기타";
     }
 
@@ -1238,5 +1240,4 @@ public class PhotoServiceImpl implements PhotoService {
 
         return false;
     }
-
 }
