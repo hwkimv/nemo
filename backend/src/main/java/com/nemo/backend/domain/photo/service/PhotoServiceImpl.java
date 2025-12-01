@@ -1188,6 +1188,7 @@ public class PhotoServiceImpl implements PhotoService {
         if (s.contains("photoism")) return "포토이즘";
         if (s.contains("signature")) return "포토시그니쳐";
         if (s.contains("twin")) return "트윈포토";
+        if (s.contains("photogray") || s.contains("pgshort") || s.contains("pg-qr-resource")) return "포토그레이";
         return "기타";
     }
 
