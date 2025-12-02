@@ -30,7 +30,7 @@ app:
     access-ttl-ms: 900000   # 15분 (밀리초)
 
   s3:
-    bucket: nemo-s3-test
+    bucket: nemo-s3-prod
     region: ap-northeast-2
     endpoint: ""                    # AWS니까 endpoint 없음
     accessKey: ${AWS_ACCESS_KEY}
@@ -38,4 +38,4 @@ app:
     pathStyle: false
     createBucketIfMissing: false
 
-  public-base-url: https://api.nemo.app
+  public-base-url: https://port-0-nemo-docker-springboot-prod-mdy7o3aya1eb5a01.sel5.cloudtype.app
