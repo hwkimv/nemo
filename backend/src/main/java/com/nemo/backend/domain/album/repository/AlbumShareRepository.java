@@ -26,4 +26,11 @@ public interface AlbumShareRepository extends JpaRepository<AlbumShare, Long> {
 
     // ✅ 앨범별 ACCEPTED 멤버만 조회 (공유 멤버 목록용)
     List<AlbumShare> findByAlbumIdAndStatusAndActiveTrue(Long albumId, Status status);
+
+    // ✅ 앨범에 공유 멤버가 존재하는지 여부 (shared 플래그 계산용)
+    boolean existsByAlbumIdAndStatusAndActiveTrue(Long albumId, Status status);
+
+    // ✅ 앨범 삭제 시, 해당 앨범의 공유 정보 전부 제거
+    void deleteByAlbumId(Long albumId);
 }
+
