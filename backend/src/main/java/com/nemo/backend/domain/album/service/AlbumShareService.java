@@ -238,6 +238,7 @@ public class AlbumShareService {
         result.add(AlbumShareResponse.SharedUser.builder()
                 .userId(owner.getId())
                 .nickname(owner.getNickname())
+                .profileImageUrl(owner.getProfileImageUrl())   // 🔹 추가
                 .role("OWNER")
                 .build()
         );
@@ -248,6 +249,7 @@ public class AlbumShareService {
                         AlbumShareResponse.SharedUser.builder()
                                 .userId(share.getUser().getId())
                                 .nickname(share.getUser().getNickname())
+                                .profileImageUrl(share.getUser().getProfileImageUrl())  // 🔹 추가
                                 .role(share.getRole().name())
                                 .build()
                 ));

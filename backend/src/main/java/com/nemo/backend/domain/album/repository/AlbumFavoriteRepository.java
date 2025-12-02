@@ -12,4 +12,7 @@ public interface AlbumFavoriteRepository extends JpaRepository<AlbumFavorite, Lo
     void deleteByAlbumIdAndUserId(Long albumId, Long userId);
 
     List<AlbumFavorite> findByUserId(Long userId);
+
+    // ✅ 앨범 삭제 시, 해당 앨범에 걸린 즐겨찾기 전부 제거
+    void deleteByAlbumId(Long albumId);
 }

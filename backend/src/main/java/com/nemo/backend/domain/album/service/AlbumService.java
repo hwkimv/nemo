@@ -66,6 +66,7 @@ public class AlbumService {
     // ownership: ALL / OWNED / SHARED
     public List<AlbumSummaryResponse> getAlbums(Long userId, AlbumOwnershipFilter ownership) {
 
+        // 1) 내가 소유한 앨범들
         List<AlbumSummaryResponse> owned = albumRepository.findByUserId(userId).stream()
                 .map(album -> {
                     autoSetThumbnailIfMissing(album);
@@ -74,6 +75,10 @@ public class AlbumService {
                             : (int) album.getPhotos().stream()
                             .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
                             .count();
+                    // ✅ 이 앨범이 현재 다른 사용자와 공유 중인지 (ACCEPTED && active=true)
+                    boolean sharedFlag = albumShareRepository
+                            .existsByAlbumIdAndStatusAndActiveTrue(album.getId(), Status.ACCEPTED);
+
                     return AlbumSummaryResponse.builder()
                             .albumId(album.getId())
                             .title(album.getName())
@@ -81,10 +86,12 @@ public class AlbumService {
                             .photoCount(photoCount)
                             .createdAt(album.getCreatedAt())
                             .role("OWNER")
+                            .shared(sharedFlag)
                             .build();
                 })
                 .collect(Collectors.toList());
 
+        // 2) 내가 공유받은 앨범들
         List<AlbumSummaryResponse> shared = albumShareRepository
                 .findByUserIdAndStatusAndActiveTrue(userId, Status.ACCEPTED).stream()
                 .map(share -> {
@@ -102,9 +109,12 @@ public class AlbumService {
                             .photoCount(photoCount)
                             .createdAt(album.getCreatedAt())
                             .role(share.getRole().name())
+                            // 공유받은 앨범 목록이므로 항상 true
+                            .shared(true)
                             .build();
                 })
                 .collect(Collectors.toList());
+
 
         List<AlbumSummaryResponse> result;
 
@@ -372,10 +382,18 @@ public class AlbumService {
             throw new ApiException(ErrorCode.FORBIDDEN, "해당 앨범을 삭제할 권한이 없습니다.");
         }
 
+        // ✅ 0) 이 앨범과 연결된 공유 정보 전부 삭제
+        albumShareRepository.deleteByAlbumId(albumId);
+
+        // ✅ 1) 이 앨범을 즐겨찾기한 기록 전부 삭제
+        albumFavoriteRepository.deleteByAlbumId(albumId);
+
+        // ✅ 2) 앨범-사진 연관관계 정리
         if (album.getPhotos() != null && !album.getPhotos().isEmpty()) {
             album.getPhotos().clear();
         }
 
+        // ✅ 3) 앨범 삭제
         albumRepository.delete(album);
     }
 
@@ -607,6 +625,10 @@ public class AlbumService {
 
         int photoCount = photoList.size();
 
+        // ✅ 이 앨범이 현재 다른 사용자와 공유 중인지 여부 (ACCEPTED && active=true 기준)
+        boolean sharedFlag = albumShareRepository
+                .existsByAlbumIdAndStatusAndActiveTrue(album.getId(), Status.ACCEPTED);
+
         return AlbumDetailResponse.builder()
                 .albumId(album.getId())
                 .title(album.getName())
@@ -615,8 +637,10 @@ public class AlbumService {
                 .photoCount(photoCount)
                 .createdAt(album.getCreatedAt())
                 .role(role)
+                .shared(sharedFlag)
                 .photoList(photoList)
                 .build();
+
     }
 
     /** imageUrl → S3 key 추출 */
