@@ -145,11 +145,16 @@ public class EmailVerificationService {
 
     private String loadTemplateHtml(String code) {
         try {
-            var resource = new ClassPathResource("templates/email-verification.html");
-            String template = Files.readString(resource.getFile().toPath(), StandardCharsets.UTF_8);
+            ClassPathResource resource = new ClassPathResource("templates/email-verification.html");
 
-            return template.replace("{{code}}", code)
-                    .replace("{{CODE}}", code); // 모든 변수를 지원
+            // ✅ JAR / 컨테이너 / 로컬 전부에서 안전하게 동작
+            try (var is = resource.getInputStream()) {
+                String template = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+
+                return template
+                        .replace("{{code}}", code)
+                        .replace("{{CODE}}", code);
+            }
 
         } catch (Exception e) {
             return """
