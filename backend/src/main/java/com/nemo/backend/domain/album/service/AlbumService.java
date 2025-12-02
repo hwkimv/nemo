@@ -578,22 +578,46 @@ public class AlbumService {
 
     /** 앨범의 coverPhotoUrl 자동 설정 로직 */
     private void autoSetThumbnailIfMissing(Album album) {
-
-        // 살아있는 사진이 하나도 없으면 썸네일 제거
-        boolean hasAlivePhoto = album.getPhotos() != null &&
-                album.getPhotos().stream()
-                        .anyMatch(p -> Boolean.FALSE.equals(p.getDeleted()));
-
-        if (!hasAlivePhoto) {
+        // 사진이 아예 없으면 썸네일 제거
+        if (album.getPhotos() == null || album.getPhotos().isEmpty()) {
             album.setCoverPhotoUrl(null);
             return;
         }
 
-        // coverPhotoUrl 이 비어 있을 때만 자동으로 채움
-        if (album.getCoverPhotoUrl() == null || album.getCoverPhotoUrl().isBlank()) {
+        // 살아있는 사진만 필터링
+        List<Photo> alivePhotos = album.getPhotos().stream()
+                .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
+                .toList();
+
+        // 살아있는 사진 없으면 썸네일 제거
+        if (alivePhotos.isEmpty()) {
+            album.setCoverPhotoUrl(null);
+            return;
+        }
+
+        String cover = album.getCoverPhotoUrl();
+        final String coverUrl = cover;   // ← lambda에서 사용할 final 변수
+
+        // 기존 커버가 살아있는 사진을 가리키는지 검증
+        if (coverUrl != null && !coverUrl.isBlank()) {
+            boolean stillValid = alivePhotos.stream().anyMatch(p -> {
+                String candidate = (p.getThumbnailUrl() != null && !p.getThumbnailUrl().isBlank())
+                        ? p.getThumbnailUrl()
+                        : p.getImageUrl();
+                return coverUrl.equals(candidate);
+            });
+
+            // 커버가 더 이상 유효하지 않으면 제거
+            if (!stillValid) {
+                cover = null;
+                album.setCoverPhotoUrl(null);
+            }
+        }
+
+        // cover가 비어 있으면 자동 선정
+        if (cover == null || cover.isBlank()) {
             album.setCoverPhotoUrl(pickAutoThumbnailUrl(album));
         }
-        // 이미 값이 있으면 (사용자 지정/업로드) 건드리지 않음
     }
 
     private String pickAutoThumbnailUrl(Album album) {

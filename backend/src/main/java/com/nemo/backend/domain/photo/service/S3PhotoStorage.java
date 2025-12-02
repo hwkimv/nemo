@@ -615,25 +615,22 @@ public class S3PhotoStorage implements PhotoStorage {
 
     /** S3 객체 삭제 */
     @Override
-    public void delete(String key) {
-        if (key == null || key.isBlank()) return;
-
-        String normalizedKey = key.startsWith("/") ? key.substring(1) : key;
-
+    public void delete(String storedFilename) {
         try {
-            DeleteObjectRequest req = DeleteObjectRequest.builder()
+            DeleteObjectRequest request = DeleteObjectRequest.builder()
                     .bucket(bucket)
-                    .key(normalizedKey)
+                    .key(storedFilename)
                     .build();
 
-            s3Client.deleteObject(req);
+            s3Client.deleteObject(request);
 
-        } catch (NoSuchKeyException e) {
-            // 이미 안 존재하는 경우는 무시
-        } catch (S3Exception | SdkClientException e) {
-            throw new StorageException("S3 삭제 실패: " + e.getMessage(), e);
+            log.info("[S3] deleted file={}", storedFilename);
+
+        } catch (Exception e) {
+            throw new StorageException("Failed to delete S3 object", e);
         }
     }
+
 
     /** S3 객체 크기 조회 (byte 단위) – presigned URL/다운로드 목록에서 용량 보여줄 때 사용 */
     public Long getObjectSize(String key) {
@@ -655,4 +652,6 @@ public class S3PhotoStorage implements PhotoStorage {
             throw new StorageException("S3 객체 정보 조회 실패: " + e.getMessage(), e);
         }
     }
+
+
 }
