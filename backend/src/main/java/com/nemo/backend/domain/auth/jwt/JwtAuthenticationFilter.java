@@ -39,6 +39,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // 회원 가입 / 로그인
             "/api/users/signup",
             "/api/users/login",
+            "/api/auth/logout",
 
             // 이메일 인증 (ex. /api/auth/email/verification/send, /confirm)
             "/api/auth/email/**",
