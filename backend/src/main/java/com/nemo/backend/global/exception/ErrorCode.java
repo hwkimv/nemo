@@ -13,6 +13,13 @@ public enum ErrorCode {
     USER_ALREADY_DELETED(HttpStatus.GONE, "USER_ALREADY_DELETED", "이미 탈퇴 처리된 사용자입니다."),
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "사용자를 찾을 수 없습니다."),
 
+    // 🔐 로그인 보안(시도 횟수 / 캡챠 / 계정 잠금)
+    NEED_CAPTCHA(HttpStatus.UNAUTHORIZED, "NEED_CAPTCHA", "비밀번호를 여러 번 틀려 캡챠 입력이 필요합니다."),
+    INVALID_CAPTCHA(HttpStatus.UNAUTHORIZED, "INVALID_CAPTCHA", "캡챠 문자가 올바르지 않습니다."),
+    ACCOUNT_LOCKED(HttpStatus.LOCKED, "ACCOUNT_LOCKED", "비밀번호를 여러 번 틀려 계정이 잠겼습니다. 비밀번호를 재설정해주세요."),
+    TOO_MANY_CAPTCHA_REQUESTS(HttpStatus.TOO_MANY_REQUESTS, "TOO_MANY_CAPTCHA_REQUESTS", "캡챠 요청이 너무 많습니다. 잠시 후 다시 시도해주세요."),
+    CAPTCHA_NOT_REQUIRED(HttpStatus.BAD_REQUEST, "CAPTCHA_NOT_REQUIRED", "현재 계정은 캡챠가 필요한 상태가 아닙니다."),
+
 
     // ============================================================
     // 🔹 추가: JWT / RefreshToken (인증 명세 기준)
