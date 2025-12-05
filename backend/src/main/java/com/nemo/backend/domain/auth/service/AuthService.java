@@ -28,7 +28,7 @@ public class AuthService {
     private final JwtUtil jwtUtil;
 
     // 캡챠 검증용 서비스
-    private final CaptchaService captchaService;
+    private final TurnstileService turnstileService;
 
     // 🔐 로그인 실패 정책
     // - 2번까지는 그냥 실패
@@ -88,15 +88,17 @@ public class AuthService {
     }
 
 
-    // =======================
-    // 2) 로그인 (시도 횟수 / 계정 잠금 / 캡챠 반영)
-    // =======================
+// =======================
+// 2) 로그인 (시도 횟수 / 계정 잠금 / Turnstile 캡챠 반영)
+// =======================
     /**
      * 이메일/비밀번호 로그인.
      *
      * 정책:
      * - 비밀번호 2번까지: 그냥 INVALID_CREDENTIALS
-     * - 3~4번째: 캡챠를 요구 (프론트는 에러 코드 = NEED_CAPTCHA 받으면 캡챠 화면으로 유도)
+     * - 3~4번째: 캡챠(Turnstile)를 요구
+     *   → 프론트는 NEED_CAPTCHA 에러를 받으면 Turnstile 위젯을 띄우고,
+     *      발급받은 captchaToken을 포함해 다시 로그인 요청
      * - 5번째 이상: 계정 잠금 → ACCOUNT_LOCKED 반환, 비밀번호 재설정 필요
      *
      * 계정 잠금은 User.loginFailCount & lockedUntil 로 관리하며,
@@ -131,17 +133,17 @@ public class AuthService {
         int failCount = user.getLoginFailCount();
         boolean needCaptcha = failCount >= LOGIN_CAPTCHA_THRESHOLD;
 
-        // 3) 캡챠가 필요한 상태인지 체크
+        // 3) Turnstile 캡챠가 필요한 상태인지 체크
         if (needCaptcha) {
-            // 3-1) 캡챠 ID/문자 자체가 안 왔으면 → "캡챠 먼저 입력해"라는 신호만 보냄
-            if (request.getCaptchaId() == null || request.getCaptchaId().isBlank()
-                    || request.getCaptchaAnswer() == null || request.getCaptchaAnswer().isBlank()) {
+            // 3-1) 토큰이 안 왔으면 → "캡챠 먼저 통과해"라는 신호만 보냄
+            String captchaToken = request.getCaptchaToken();
+            if (captchaToken == null || captchaToken.isBlank()) {
                 throw new ApiException(ErrorCode.NEED_CAPTCHA);
             }
 
-            // 3-2) 캡챠 값이 왔으면 실제 검증
-            //  - 틀리거나 만료된 경우: CaptchaService가 ApiException(INVALID_CAPTCHA / CODE_EXPIRED / ATTEMPTS_EXCEEDED) 던짐
-            captchaService.validate(request.getCaptchaId(), request.getCaptchaAnswer());
+            // 3-2) 토큰이 왔으면 실제 Turnstile 검증
+            //      - 실패 시 TurnstileService가 ApiException(INVALID_CAPTCHA 등)을 던진다.
+            turnstileService.verifyToken(captchaToken, null);
         }
 
         // 4) 비밀번호 검증
@@ -191,6 +193,7 @@ public class AuthService {
 
         userRepository.save(user);
     }
+
 
     // =======================
     // 3) 로그아웃 (명세 반영)
