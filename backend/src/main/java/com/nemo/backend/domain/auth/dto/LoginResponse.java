@@ -1,4 +1,3 @@
-// backend/src/main/java/com/nemo/backend/domain/auth/dto/LoginResponse.java
 package com.nemo.backend.domain.auth.dto;
 
 import lombok.Getter;
@@ -11,6 +10,7 @@ import lombok.Getter;
  *   "accessToken": "xxx.yyy.zzz",
  *   "refreshToken": "uuid-....",
  *   "expiresIn": 3600,
+ *   "isNewUser": false,
  *   "user": {
  *     "userId": 1,
  *     "nickname": "닉네임",
@@ -24,17 +24,20 @@ public class LoginResponse {
     private final String accessToken;
     private final String refreshToken;
     private final long expiresIn;
+    private final boolean isNewUser;
     private final UserSummary user;
 
     public LoginResponse(String accessToken,
                          String refreshToken,
                          long expiresIn,
+                         boolean isNewUser,
                          Long userId,
                          String nickname,
                          String profileImageUrl) {
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
         this.expiresIn = expiresIn;
+        this.isNewUser = isNewUser;
         this.user = new UserSummary(userId, nickname, profileImageUrl);
     }
 
