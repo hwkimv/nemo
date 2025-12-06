@@ -287,7 +287,6 @@ public class AuthService {
                                              String profileImageUrlFromProvider) {
 
         if (socialId == null || socialId.isBlank()) {
-            // 토큰은 맞는데 유저 ID를 못 읽은 경우 → 토큰 불량 취급
             if ("kakao".equals(provider)) {
                 throw new ApiException(ErrorCode.INVALID_KAKAO_TOKEN);
             } else if ("google".equals(provider)) {
@@ -304,13 +303,12 @@ public class AuthService {
         boolean isNewUser = false;
 
         if (user == null) {
-            // 2) 없으면 자동 회원가입
+            // 2) 없으면 "최초 로그인" → 자동 회원가입
             String email = buildSocialEmail(provider, socialId, emailFromProvider);
 
             user = new User();
             user.setEmail(email);
-            // SNS 로그인 계정은 로컬 비밀번호로 로그인하지 않으므로 랜덤 비밀번호
-            user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
+            user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString())); // 랜덤 비번
             user.setNickname(
                     (nicknameFromProvider != null && !nicknameFromProvider.isBlank())
                             ? nicknameFromProvider.trim()
@@ -324,18 +322,9 @@ public class AuthService {
 
             user = userRepository.save(user);
             isNewUser = true;
-        } else {
-            // 3) 있을 경우, 닉네임/프로필 정도는 최신값으로 가볍게 동기화
-            if (nicknameFromProvider != null && !nicknameFromProvider.isBlank()
-                    && !nicknameFromProvider.equals(user.getNickname())) {
-                user.setNickname(nicknameFromProvider.trim());
-            }
-            if (profileImageUrlFromProvider != null
-                    && !profileImageUrlFromProvider.isBlank()
-                    && !profileImageUrlFromProvider.equals(user.getProfileImageUrl())) {
-                user.setProfileImageUrl(profileImageUrlFromProvider);
-            }
         }
+        // 🔹 else 블록에서 더 이상 nickname/profileImageUrl 을 소셜 값으로 덮어쓰지 않음
+        //    → 이후 프로필 변경은 전부 우리 서비스(마이페이지 수정 API)만 사용
 
         return createLoginResponse(user, isNewUser);
     }
