@@ -32,5 +32,9 @@ public interface AlbumShareRepository extends JpaRepository<AlbumShare, Long> {
 
     // ✅ 앨범 삭제 시, 해당 앨범의 공유 정보 전부 제거
     void deleteByAlbumId(Long albumId);
+
+    List<AlbumShare> findAllByUserId(Long userId);
+
+    void deleteAllByAlbumId(Long albumId);
 }
 

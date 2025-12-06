@@ -2,6 +2,8 @@ package com.nemo.backend.domain.auth.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nemo.backend.domain.album.repository.AlbumRepository;
+import com.nemo.backend.domain.album.repository.AlbumShareRepository;
 import com.nemo.backend.domain.auth.dto.GoogleLoginRequest;
 import com.nemo.backend.domain.auth.dto.KakaoLoginRequest;
 import com.nemo.backend.domain.auth.dto.*;
@@ -12,6 +14,14 @@ import com.nemo.backend.domain.user.entity.User;
 import com.nemo.backend.domain.user.repository.UserRepository;
 import com.nemo.backend.global.exception.ApiException;
 import com.nemo.backend.global.exception.ErrorCode;
+import com.nemo.backend.domain.album.entity.Album;
+import com.nemo.backend.domain.album.entity.AlbumShare;
+import com.nemo.backend.domain.album.repository.AlbumRepository;
+import com.nemo.backend.domain.album.repository.AlbumShareRepository;
+import com.nemo.backend.domain.album.repository.AlbumFavoriteRepository;
+import com.nemo.backend.domain.friend.repository.FriendRepository;
+import com.nemo.backend.domain.photo.entity.Photo;
+import com.nemo.backend.domain.photo.repository.PhotoRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -36,6 +46,13 @@ public class AuthService {
     private final JwtUtil jwtUtil;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+
+    // 🔽 새로 추가
+    private final AlbumRepository albumRepository;
+    private final AlbumShareRepository albumShareRepository;
+    private final AlbumFavoriteRepository albumFavoriteRepository;
+    private final FriendRepository friendRepository;
+    private final PhotoRepository photoRepository;
 
     @Value("${jwt.access-exp-seconds:3600}")
     private long accessExpSeconds;
@@ -165,7 +182,6 @@ public class AuthService {
 
         // ✅ 로컬 계정만 비밀번호 필수
         if ("local".equalsIgnoreCase(user.getProvider())) {
-            // 비밀번호가 없거나 공백이면 에러
             if (rawPassword == null || rawPassword.isBlank()) {
                 throw new ApiException(ErrorCode.INVALID_PASSWORD, "비밀번호가 필요합니다.");
             }
@@ -176,7 +192,13 @@ public class AuthService {
         }
         // ✅ 소셜 계정(provider = kakao / google 등)은 비밀번호 검증 없이 그냥 진행
 
+        // 🔥 1) 유저 관련 도메인 데이터 정리
+        cleanupUserData(userId);
+
+        // 🔥 2) 리프레시 토큰 삭제
         refreshTokenRepository.deleteByUserId(userId);
+
+        // 🔥 3) 마지막으로 유저 삭제
         userRepository.delete(user);
     }
 
@@ -252,6 +274,72 @@ public class AuthService {
                     return refreshToken.getToken();
                 });
     }
+
+    /**
+     * 회원탈퇴 시 유저가 소유/참여 중인 도메인 데이터 정리
+     * - 내가 소유한 앨범: 전부 삭제 (공유/개인 구분 없이)
+     *   · 공유 앨범이면: 공유 멤버 전부 강퇴 후 앨범 삭제
+     *   · 앨범 즐겨찾기(다른 유저가 누른 것도 포함) 전부 삭제
+     * - 내가 초대받아 들어가 있는 공유 앨범: share 레코드만 제거(자동 탈퇴)
+     * - 친구 관계: 나와 관련된 친구 관계 전부 삭제
+     * - 내 사진: 전부 삭제(또는 soft delete)
+     * - 내가 즐겨찾기한 앨범: 전부 삭제
+     */
+    private void cleanupUserData(Long userId) {
+
+        // 0) 내가 즐겨찾기한 앨범 즐겨찾기 전부 삭제 (album_favorite.user_id = userId)
+        albumFavoriteRepository.deleteAllByUserId(userId);
+
+        // 1) 내가 멤버로 들어가 있는 공유 앨범에서 "나만" 탈퇴 (owner가 아닌 경우)
+        var myShares = albumShareRepository.findAllByUserId(userId);
+
+        for (AlbumShare share : myShares) {
+            Album album = share.getAlbum();
+
+            // Album 소유자는 album.getUser()
+            Long ownerId = album.getUser().getId();
+
+            // 내가 owner가 아닌 경우 → 공유 앨범 '나만' 탈퇴
+            if (!ownerId.equals(userId)) {
+                albumShareRepository.delete(share);
+            }
+        }
+
+        // 2) 내가 소유한 앨범들 조회 (Album.user = 나)
+        var myAlbums = albumRepository.findByUserId(userId);
+
+        for (Album album : myAlbums) {
+            Long albumId = album.getId();
+
+            // 2-1) 이 앨범의 공유 멤버 전부 추방 (AlbumShare 삭제)
+            albumShareRepository.deleteAllByAlbumId(albumId);
+
+            // 2-2) 이 앨범이 즐겨찾기 된 내역 전부 삭제 (다른 유저가 즐겨찾기한 것도 포함)
+            albumFavoriteRepository.deleteAllByAlbumId(albumId);
+
+            // 2-3) 앨범-사진 매핑은 ManyToMany 이므로
+            //      album 삭제 시 album_photos 조인 테이블 레코드는 자동으로 날아감 (FK+cascade)
+            //      (별도 albumPhotoRepository 가 있으면 거기서 deleteAllByAlbumId 해도 됨)
+
+            // 2-4) 앨범 삭제
+            albumRepository.delete(album);
+        }
+
+        // 3) 친구 관계 전부 삭제 (내가 user이든 friend이든 전부)
+        friendRepository.deleteAllByUserIdOrFriendId(userId, userId);
+
+        // 4) 내 사진 전체 삭제 (soft delete or 물리 삭제 선택)
+        //   - Photo 엔티티에 deleted 플래그 있으니까 soft delete로 처리 예시
+        var myPhotos = photoRepository.findAllByUserId(userId);
+        for (Photo photo : myPhotos) {
+            photo.setDeleted(true);     // 소프트 삭제
+            // photo.setFavorite(false); // 즐겨찾기도 동시에 해제하고 싶으면 포함
+        }
+
+        // 만약 진짜 DB에서 사진 레코드를 없애고 싶다면:
+        // photoRepository.deleteAll(myPhotos);
+    }
+
 
     private LoginResponse createLoginResponse(User user, boolean isNewUser) {
         String accessToken = jwtUtil.createAccessToken(user.getId(), user.getEmail());

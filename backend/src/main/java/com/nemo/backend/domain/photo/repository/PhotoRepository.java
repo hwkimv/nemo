@@ -39,4 +39,7 @@ public interface PhotoRepository extends JpaRepository<Photo, Long> {
 
     // ✅ 유저의 전체 사진 개수 조회 (삭제되지 않은 것만)
     int countByUserIdAndDeletedIsFalse(Long userId);
+
+    // ✅ 특정 사용자의 모든 사진 (deleted 여부 상관없이) 조회
+    List<Photo> findAllByUserId(Long userId);
 }
