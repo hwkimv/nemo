@@ -156,25 +156,28 @@ public class AuthService {
     }
 
     // =======================
-    // 4) 회원탈퇴 (비밀번호 확인 방식)
+    // 4) 회원탈퇴
     // =======================
     public void deleteAccount(Long userId, String rawPassword) {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
 
-        if (rawPassword != null && !rawPassword.isBlank()) {
+        // ✅ 로컬 계정만 비밀번호 필수
+        if ("local".equalsIgnoreCase(user.getProvider())) {
+            // 비밀번호가 없거나 공백이면 에러
+            if (rawPassword == null || rawPassword.isBlank()) {
+                throw new ApiException(ErrorCode.INVALID_PASSWORD, "비밀번호가 필요합니다.");
+            }
+
             if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
                 throw new ApiException(ErrorCode.INVALID_PASSWORD);
             }
         }
+        // ✅ 소셜 계정(provider = kakao / google 등)은 비밀번호 검증 없이 그냥 진행
 
         refreshTokenRepository.deleteByUserId(userId);
         userRepository.delete(user);
-    }
-
-    public void deleteAccount(Long userId) {
-        deleteAccount(userId, null);
     }
 
     // =======================
@@ -256,6 +259,7 @@ public class AuthService {
 
         String nickname = user.getNickname() != null ? user.getNickname() : "";
         String profile = user.getProfileImageUrl() != null ? user.getProfileImageUrl() : "";
+        String provider = (user.getProvider() != null ? user.getProvider() : "local");
 
         return new LoginResponse(
                 accessToken,
@@ -264,7 +268,8 @@ public class AuthService {
                 isNewUser,
                 user.getId(),
                 nickname,
-                profile
+                profile,
+                provider      // 👈 여기 추가
         );
     }
 
