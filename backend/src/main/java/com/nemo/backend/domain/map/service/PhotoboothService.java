@@ -220,6 +220,39 @@ public class PhotoboothService {
 
         log.info("[MAP][SEARCH][RAW] totalRawItems={}", raw.size());
 
+        /**
+         * 🔁 Fallback: 지역명 붙인 검색에서 0개 나오면
+         *    → regionName 없이 한 번 더 검색
+         */
+        if (raw.isEmpty() && regionName != null && !regionName.isBlank()) {
+            log.info("[MAP][SEARCH][FALLBACK] no result with region. retry without region");
+
+            List<String> fallbackKeywords = new ArrayList<>();
+
+            if (containsBrand) {
+                // 예: "인생네컷 수유"
+                fallbackKeywords.add(trimmed);  // "인생네컷 수유"
+            } else {
+                // 예: "수유"
+                for (String brand : BRANDS) {
+                    fallbackKeywords.add(trimmed + " " + brand);  // "수유 인생네컷" ...
+                }
+                fallbackKeywords.add(trimmed + " 포토부스");        // "수유 포토부스"
+            }
+
+            for (String kw : fallbackKeywords) {
+                Map<String, Object> res = naverApiClient.searchLocal(kw, PAGE_SIZE, 1, "random");
+                List<Map<String, Object>> items = extractItems(res);
+                raw.addAll(items);
+
+                if (raw.size() >= max * 2) {
+                    break;
+                }
+            }
+
+            log.info("[MAP][SEARCH][RAW][FALLBACK] totalRawItems={}", raw.size());
+        }
+
         // ────────────────────────────────────────
         // 4) raw → PhotoboothDto 변환 + 좌표 없는 항목 제거
         // ────────────────────────────────────────
