@@ -9,6 +9,7 @@ import com.nemo.backend.domain.user.repository.UserRepository;
 import com.nemo.backend.global.exception.ApiException;
 import com.nemo.backend.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -104,6 +106,8 @@ public class AuthService {
      * 계정 잠금은 User.loginFailCount & lockedUntil 로 관리하며,
      * 비밀번호 재설정 성공 시 User.resetLoginFail()로 해제한다.
      */
+
+    @Transactional(noRollbackFor = ApiException.class)
     public LoginResponse login(LoginRequest request) {
 
         // 0) 기본 파라미터 검증
@@ -182,7 +186,9 @@ public class AuthService {
      * - 실패 횟수가 최대치를 넘으면 lockedUntil 설정
      */
     private void handleLoginFail(User user) {
+        int before = user.getLoginFailCount();
         user.increaseLoginFail(); // loginFailCount++, lastLoginFailedAt 갱신
+        log.info("[LOGIN-FAIL] {}: {} -> {}", user.getEmail(), before, user.getLoginFailCount());
 
         if (user.getLoginFailCount() >= LOGIN_MAX_FAIL_COUNT) {
             // 정책: 5회 이상 틀리면 계정 잠금.
