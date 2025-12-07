@@ -31,6 +31,10 @@ public class TurnstileService {
     private static final String VERIFY_URL =
             "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
+    @Getter
+    @Value("${turnstile.siteKey}")
+    private String siteKey;
+
     @Value("${turnstile.secretKey}")
     private String secretKey;
 

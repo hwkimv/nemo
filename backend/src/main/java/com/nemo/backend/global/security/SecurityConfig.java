@@ -53,7 +53,10 @@ public class SecurityConfig {
 
                                 // 토큰 재발급 및 dev 시드
                                 "/api/auth/refresh",
-                                "/api/auth/dev/**"
+                                "/api/auth/dev/**",
+
+                                // Cloudflare Turnstile
+                                "/api/auth/turnstile"
                         ).permitAll()
 
                         // 🔒 그 외 모든 /api/** 는 인증 필요

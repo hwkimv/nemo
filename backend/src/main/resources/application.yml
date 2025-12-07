@@ -86,6 +86,7 @@ app:
 # Turnstile 캡챠설정
 # =============================
 turnstile:
+  siteKey: ${TURNSTILE_SITE_KEY}
   secretKey: ${TURNSTILE_SECRET_KEY}
   enabled: true
 
