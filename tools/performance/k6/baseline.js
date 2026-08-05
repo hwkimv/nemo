@@ -29,6 +29,9 @@ export const options = {
   thresholds: {
     http_req_failed: ['rate==0'],
     checks: ['rate==1'],
+    'http_req_duration{api:albums}': ['max>=0'],
+    'http_req_duration{api:photos}': ['max>=0'],
+    'http_req_duration{api:timeline}': ['max>=0'],
   },
 };
 
