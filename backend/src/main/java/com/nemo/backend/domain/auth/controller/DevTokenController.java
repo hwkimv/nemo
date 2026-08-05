@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 
-@Profile({"local", "dev"})          // ⭐ 로컬/개발 환경에서만 활성화되는 개발용 컨트롤러
+@Profile({"local", "dev", "benchmark"}) // 로컬/개발/성능 측정 환경에서만 활성화
 @RestController
 @RequestMapping("/api/auth/dev")
 @RequiredArgsConstructor

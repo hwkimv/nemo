@@ -38,5 +38,24 @@ services:
       - ./infra/localstack-init:/etc/localstack/init/ready.d
     profiles: [ "dev","s3" ]   # dev에서 자동 사용하거나 명시적으로 s3 켜기
 
+  postgres-benchmark:
+    image: postgres:17-alpine
+    container_name: nemo-postgres-benchmark
+    environment:
+      POSTGRES_DB: nemo_benchmark
+      POSTGRES_USER: nemo_benchmark
+      POSTGRES_PASSWORD: nemo_benchmark_local_only
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nemo_benchmark -d nemo_benchmark"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_benchmark_data:/var/lib/postgresql/data
+    profiles: ["benchmark"]
+
 volumes:
   localstack_data:
+  postgres_benchmark_data:
