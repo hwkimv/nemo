@@ -15,10 +15,12 @@ import lombok.Getter;
  *   "accessToken": "xxx.yyy.zzz",
  *   "refreshToken": "uuid-....",
  *   "expiresIn": 3600,
+ *   "isNewUser": false,
  *   "user": {
  *     "userId": 1,
  *     "nickname": "닉네임",
- *     "profileImageUrl": "https://.../profile.jpg"
+ *     "profileImageUrl": "https://.../profile.jpg",
+ *     "provider": "local" | "kakao" | "google"
  *   }
  * }
  *
@@ -36,6 +38,8 @@ public class LoginResponse {
 
     /** Access Token 만료 시간 (초 단위, 예: 3600 = 1시간) */
     private final long expiresIn;
+    /** 소셜 최초 로그인으로 자동 회원가입된 경우 true */
+    private final boolean isNewUser;
 
     /** 로그인 성공한 사용자 요약 정보 */
     private final UserSummary user;
@@ -43,13 +47,16 @@ public class LoginResponse {
     public LoginResponse(String accessToken,
                          String refreshToken,
                          long expiresIn,
+                         boolean isNewUser,
                          Long userId,
                          String nickname,
-                         String profileImageUrl) {
+                         String profileImageUrl,
+                         String provider) {               // 👈 provider 추가
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
         this.expiresIn = expiresIn;
-        this.user = new UserSummary(userId, nickname, profileImageUrl);
+        this.isNewUser = isNewUser;
+        this.user = new UserSummary(userId, nickname, profileImageUrl, provider);
     }
 
     /**
@@ -60,11 +67,16 @@ public class LoginResponse {
         private final Long userId;
         private final String nickname;
         private final String profileImageUrl;
+        private final String provider;   // 👈 추가
 
-        public UserSummary(Long userId, String nickname, String profileImageUrl) {
+        public UserSummary(Long userId,
+                           String nickname,
+                           String profileImageUrl,
+                           String provider) {
             this.userId = (userId == null ? 0L : userId);
             this.nickname = (nickname == null ? "" : nickname);
             this.profileImageUrl = (profileImageUrl == null ? "" : profileImageUrl);
+            this.provider = (provider == null ? "local" : provider);
         }
     }
 }

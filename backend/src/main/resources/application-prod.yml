@@ -1,22 +1,22 @@
 # ============================================
-# 🚀 application-prod.yml
-# - CloudType에서 백엔드와 DB를 함께 배포했을 때 사용
-# - 내부 통신 (서비스명:3306)으로 연결
-# - 비밀번호 등 민감정보는 환경변수(시크릿)로 주입
+# application-prod.yml
+# - Spring Boot connects to Supabase PostgreSQL.
+# - Secrets are injected through deployment environment variables.
 # ============================================
 
 spring:
+  h2:
+    console:
+      enabled: false
   datasource:
-    driver-class-name: org.mariadb.jdbc.Driver
-    # ⛓️ CloudType DB 접속 주소 (도메인 탭에서 확인)
-    url: jdbc:mariadb://svc.sel5.cloudtype.app:30303/nemo?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Seoul
-    username: ${DB_USER}      # DB 사용자명
-    password: ${DB_PASSWORD}   # DB 비밀번호
-
+    driver-class-name: org.postgresql.Driver
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
   jpa:
-    database-platform: org.hibernate.dialect.MariaDBDialect
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: validate         # 운영 환경은 validate (DB 변경 금지)
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate.format_sql: true
@@ -24,18 +24,32 @@ spring:
 
 app:
   jwt:
-    # 최소 32바이트 이상. 예시는 Base64 32바이트(24 raw bytes)보다 더 긴 랜덤 문자열 권장.
-    secret: "nemo-dev-secret-please-change-this-very-long-32bytes-min!"
-    issuer: "nemo-backend"
-    access-ttl-ms: 900000   # 15분 (밀리초)
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:nemo-backend}
+    access-ttl-ms: ${JWT_ACCESS_TTL_MS:900000}
 
   s3:
-    bucket: nemo-s3-prod
-    region: ap-northeast-2
+    bucket: ${AWS_S3_BUCKET:nemo-s3-prod}
+    region: ${AWS_REGION:ap-northeast-2}
     endpoint: ""                    # AWS니까 endpoint 없음
     accessKey: ${AWS_ACCESS_KEY}
     secretKey: ${AWS_SECRET_KEY}
     pathStyle: false
     createBucketIfMissing: false
 
-  public-base-url: https://port-0-nemo-docker-springboot-prod-mdy7o3aya1eb5a01.sel5.cloudtype.app
+  public-base-url: ${PUBLIC_BASE_URL}
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
