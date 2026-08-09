@@ -51,7 +51,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             // 토큰 재발급 / 개발용 시드
             "/api/auth/refresh",
-            "/api/auth/dev/**"
+            "/api/auth/dev/**",
+
+            // CAPTCHA 검증
+            "/api/auth/turnstile"
     );
 
     // 🔒 이 경로들은 토큰이 반드시 필요합니다 (보호 대상)
