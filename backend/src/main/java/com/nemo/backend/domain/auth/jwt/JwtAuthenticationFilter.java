@@ -2,6 +2,7 @@
 package com.nemo.backend.domain.auth.jwt;
 
 import com.nemo.backend.domain.auth.principal.UserPrincipal;
+import com.nemo.backend.global.security.PublicEndpoints;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,34 +29,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
     // 🔓 이 경로들은 필터를 건너뜁니다 (공개, 토큰 필요 없음)
-    private static final List<String> PUBLIC_PATTERNS = List.of(
-            // infra / 문서
-            "/h2-console/**",
-            "/swagger-ui/**",
-            "/v3/api-docs/**",
-            "/files/**",
-            "/actuator/**",
-
-            // 회원 가입 / 로그인
-            "/api/users/signup",
-            "/api/users/login",
-            "/api/auth/logout",
-            "/api/auth/oauth/**",
-
-            // 이메일 인증 (ex. /api/auth/email/verification/send, /confirm)
-            "/api/auth/email/**",
-
-            // 비밀번호 찾기 / 재설정 계열
-            "/api/auth/password/**",
-            "/api/users/password/**",
-
-            // 토큰 재발급 / 개발용 시드
-            "/api/auth/refresh",
-            "/api/auth/dev/**",
-
-            // CAPTCHA 검증
-            "/api/auth/turnstile"
-    );
+    //  - SecurityConfig와 같은 목록을 공유해 두 정책이 어긋나지 않게 한다.
+    private static final List<String> PUBLIC_PATTERNS = PublicEndpoints.PATTERNS;
 
     // 🔒 이 경로들은 토큰이 반드시 필요합니다 (보호 대상)
     //  - PUBLIC_PATTERNS 에 포함된 것들은 예외

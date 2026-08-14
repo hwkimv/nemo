@@ -18,7 +18,8 @@ docs/project/
 ├─ templates/
 │  └─ technical-change-record.md
 └─ case-studies/
-   └─ 2026-08-02-supabase-postgresql-runtime-hardening.md
+   ├─ 2026-08-02-supabase-postgresql-runtime-hardening.md
+   └─ 2026-08-14-보안-인증-조회성능-개선.md
 ```
 
 ## 사례 문서
@@ -26,6 +27,7 @@ docs/project/
 | 날짜 | 상태 | 주제 | 핵심 근거 |
 |---|---|---|---|
 | 2026-08-02 | Verified | [Supabase PostgreSQL 전환 후 런타임 하드닝](case-studies/2026-08-02-supabase-postgresql-runtime-hardening.md) | 자동 테스트, prod 기동, read-only HTTP smoke |
+| 2026-08-14 | Verified | [보안·인증 결함 제거와 앨범/타임라인 조회 성능 개선](case-studies/2026-08-14-보안-인증-조회성능-개선.md) | 회귀 테스트 29개 추가, 앨범 목록 SQL 202→4 |
 
 ## 설계·실행 문서
 

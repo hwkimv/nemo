@@ -53,7 +53,9 @@ class JwtAuthenticationFilterTest {
     @ValueSource(strings = {
             "/api/users/signup",
             "/api/users/login",
-            "/api/auth/logout",
+            // P0-4: 실제 로그아웃 endpoint는 /api/users/logout이다.
+            // 예전 목록의 /api/auth/logout은 존재하지 않는 경로였다.
+            "/api/users/logout",
             "/api/auth/oauth/kakao",
             "/api/auth/email/verification/send",
             "/api/auth/password/reset",
