@@ -43,6 +43,10 @@ logging:
   level:
     root: INFO
     com.nemo.backend: DEBUG
+  # 모든 로그 줄에 requestId를 붙여 한 요청의 흐름을 하나의 id로 추적한다.
+  # 값은 RequestIdFilter가 MDC에 넣고, 응답 헤더 X-Request-Id로도 돌려준다.
+  pattern:
+    level: "%5p [%X{requestId:-no-req-id}]"
 
 naver:
   openapi:
