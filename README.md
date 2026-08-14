@@ -24,7 +24,7 @@
 | 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
-| CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. 설정 누락 2건 수정 | [CS 07](docs/case-studies/07-ci-cd.md) |
+| CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
 | 인증 경로 테스트 | 전체 **94개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 기타 15) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 
@@ -125,7 +125,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 04 | [앨범 목록 N+1 제거와 측정](docs/case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** |
 | 05 | [지도 API 캐시가 가리고 있던 것](docs/case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 측정하다 캐시가 가린 버그 발견 |
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
-| 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 짜다가 발견한 결함 2건 |
+| 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 돌려보며 드러난 결함 5건 |
 
 전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
 
