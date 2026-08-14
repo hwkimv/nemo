@@ -1,0 +1,24 @@
+# Prometheus 스크레이프 설정
+#
+# NEMO 백엔드가 /actuator/prometheus로 내보내는 지표를 15초마다 가져온다.
+#
+# host.docker.internal은 "컨테이너에서 본 호스트 머신"이다.
+# 앱을 호스트에서(./gradlew bootRun) 띄우고 Prometheus만 컨테이너로 돌리는 구성을 기본으로 한다.
+# 앱까지 컨테이너로 올린다면 target을 서비스 이름으로 바꾼다.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: nemo-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:8080
+        labels:
+          service: nemo-backend
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

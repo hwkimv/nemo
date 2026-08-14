@@ -16,6 +16,7 @@
 | 03 | [인증·권한 경계의 구멍 4개 막기](case-studies/03-security-boundaries.md) | 타인 사진 접근 차단, 토큰 로그 제거, 회귀 테스트 17개 | `Verified` |
 | 04 | [앨범 목록 N+1 제거와 측정](case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** | `Verified` |
 | 05 | [지도 API 캐시가 가리고 있던 것](case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 캐시가 가린 버그 발견 | `Verified` |
+| 06 | [지표를 붙이고 나서 알게 된 것](case-studies/06-monitoring.md) | 레이트 리미터가 동시 요청에 무력. 5회/초 의도 → 40회/초 | `Verified` |
 
 ---
 

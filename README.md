@@ -23,7 +23,8 @@
 | 앨범 목록 DB 페이지네이션 | 앨범 5,000개에서 **74ms → 8ms**, 앨범 수와 무관하게 고정 | [CS 04](docs/case-studies/04-query-performance.md) |
 | 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
-| 인증 경로 테스트 | 전체 **91개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 기존 12) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
+| 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
+| 인증 경로 테스트 | 전체 **92개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 기존 13) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 
 **측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
@@ -122,6 +123,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 03 | [인증·권한 경계의 구멍 4개 막기](docs/case-studies/03-security-boundaries.md) | 타인 사진 접근 차단, 토큰 로그 제거. 회귀 테스트 17개 |
 | 04 | [앨범 목록 N+1 제거와 측정](docs/case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** |
 | 05 | [지도 API 캐시가 가리고 있던 것](docs/case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 측정하다 캐시가 가린 버그 발견 |
+| 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
 
 전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
 
@@ -161,13 +163,21 @@ cd frontend && flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080
 
 Mock API는 `--dart-define=USE_MOCK_API=true`일 때만 켜집니다.
 
+### 모니터링
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+Grafana `http://localhost:3000` (admin / admin) → NEMO 폴더. 앱은 호스트에서 띄운 상태여야 합니다.
+
 ### Test
 
 ```bash
 cd backend && ./gradlew test
 ```
 
-**91 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**92 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 
@@ -191,3 +201,5 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
 - **S3에 연결되지 않으면 앱이 기동하지 않습니다.** 읽기 전용 API만 쓰는 경우에도 그렇습니다. 성능 측정 중 발견했고 아직 고치지 않았습니다.
+- **지도 API의 레이트 리미터가 동시 요청에 동작하지 않습니다.** 의도는 초당 5회인데 동시 8건이면 초당 40회가 나갑니다. 모니터링을 붙이며 발견했고 아직 고치지 않았습니다. ([CS 06](docs/case-studies/06-monitoring.md))
+- **Grafana 대시보드를 실제 화면으로 확인하지 못했습니다.** 작업 환경의 Docker가 불안정해 `promtool`로 설정·쿼리 문법만 검증했습니다.

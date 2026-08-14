@@ -56,6 +56,47 @@ services:
       - postgres_benchmark_data:/var/lib/postgresql/data
     profiles: ["benchmark"]
 
+  # ────────────────────────────────────────────────────────────
+  # 모니터링: Actuator → Prometheus → Grafana
+  #   docker compose --profile monitoring up -d
+  #   Grafana  http://localhost:3000  (admin / admin)
+  #   앱은 호스트에서 띄운다 (./gradlew bootRun). Prometheus가 host.docker.internal:8080을 긁는다.
+  # ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: nemo-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["monitoring"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: nemo-grafana
+    environment:
+      # 로컬 전용 기본 계정. 운영에 그대로 쓰지 않는다.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    profiles: ["monitoring"]
+
 volumes:
   localstack_data:
   postgres_benchmark_data:
+  prometheus_data:
+  grafana_data:
