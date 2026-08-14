@@ -13,7 +13,7 @@ date: 2026-08-14
 | **기간** | 2026-08-14 |
 | **범위** | Backend — Sentry SDK, 스크러빙, 친구 도메인 예외 |
 | **결과** | 중복 친구 요청 **500 → 409**, Sentry 이벤트 **1건 → 0건** |
-| **증거** | 실제 Sentry UI에서 확인한 이벤트, `SentryScrubberTest` (7) |
+| **증거** | 실제 Sentry UI에서 확인한 이벤트, 스크러빙 테스트 13개 |
 
 ---
 
@@ -255,6 +255,58 @@ user    : {}
 | 쿠키·본문·환경변수 | **없음** |
 | `debugParam=abc` | 남음 (진단에 필요) |
 
+### 발견 ③ — breadcrumb은 스크러버를 거치지 않는다
+
+UI에서 이벤트를 확인하다가 Breadcrumbs에 우리 로그가 그대로 실려 있는 것을 봤습니다.
+
+```
+[NAVER][EX][LOCAL] attempt 3/3 → 2000ms 대기 후 재시도.
+uri=http://localhost:9/dead?query=...&display=5&start=1&sort=random
+```
+
+`SentryScrubber`는 `event.request`와 `event.user`만 손봅니다. **breadcrumb은 건드리지 않습니다.**
+그런데 설정이 이렇습니다.
+
+```yaml
+sentry.logging.minimum-breadcrumb-level: info
+```
+
+**INFO 이상 로그가 전부 breadcrumb으로 Sentry에 실려 갑니다.**
+누군가 `log.info("... token={}", token)` 한 줄을 추가하면, request 스크러빙을 아무리
+촘촘히 해도 그 값은 그대로 나갑니다.
+
+> 당시 실제로 새는 값은 없었습니다. 네이버 자격증명은 헤더로 나가고 URI엔 없으며,
+> [CS 03](03-security-boundaries.md)에서 `Authorization` 로그를 이미 지웠기 때문입니다.
+> **하지만 구조적으로 뚫려 있었습니다.**
+
+이 구조는 헤더를 허용 목록으로 처리한 이유와 같습니다.
+**새로 추가되는 것이 기본적으로 안전한 쪽에 서야 합니다.**
+로그는 계속 추가되고, 추가하는 사람이 Sentry를 떠올릴 것이라고 기대할 수 없습니다.
+
+`SentryBreadcrumbScrubber`를 추가했습니다. 로그 메시지는 구조가 없어 이름으로 판단할 수
+없으므로 **모양으로** 찾습니다.
+
+| 패턴 | 예 |
+|---|---|
+| 이름이 붙은 비밀값 | `token=...`, `password:...`, `client_secret=...` |
+| 인증 스킴 | `Bearer ...`, `Basic ...` |
+| JWT 모양 | `eyJ...` 세 토막 |
+| data 맵 키 | 키 이름이 민감하면 값 전체 |
+
+**실제 전송 payload로 확인**했습니다. 네이버 엔드포인트에 일부러 `token=LEAKED_VIA_BREADCRUMB_999`를
+넣어 로그에 찍히게 만든 뒤 이벤트를 받아봤습니다.
+
+```
+uri=http://localhost:9/dead?token=[redacted]&query=%ED%8F%AC%ED%86%A0%EB%B6%80%EC%8A%A4&display=5
+LEAKED 문자열 포함: False
+```
+
+진단에 필요한 `query=`, `display=`는 남고 비밀값만 가려졌습니다.
+
+> **한계** — 모양이 특이하지 않은 비밀값(예: 짧은 인증코드)은 걸러내지 못합니다.
+> 이건 **마지막 그물이지 첫 번째 방어선이 아닙니다.**
+> 애초에 로그에 비밀값을 찍지 않는 것이 먼저입니다.
+
 ### 발견 ② — 정상적인 사용자 상황이 500이었다
 
 스택 트레이스가 가리킨 곳을 고쳤습니다. 예상 가능한 상태·권한 오류에 도메인 코드를 부여합니다.
@@ -292,6 +344,8 @@ Sentry를 침묵시킨 것이 아니라 **소음만 걷어낸 것**입니다.
 - **Event API로 이벤트를 조회하지는 못했습니다.** 온보딩에서 발급된 auth token이
   `project:releases` 범위라 403이었습니다. 확인은 UI에서 했습니다.
 - **알림 규칙이 없습니다.** 어떤 이벤트에 누구에게 알릴지는 정하지 않았습니다.
+- **breadcrumb 마스킹은 모양으로 찾습니다.** 이름표 없는 짧은 비밀값은 걸러내지 못합니다.
+  로그에 비밀값을 찍지 않는 것이 먼저이고, 이건 마지막 그물입니다.
 - **`release` 값이 비어 있습니다.** CI에서 커밋 SHA를 주입하면 이벤트와 배포를 이을 수 있습니다.
 - **남은 `IllegalStateException`이 다른 도메인에도 있을 수 있습니다.**
   친구 도메인만 정리했습니다. 같은 기준으로 전수 점검이 필요합니다.
@@ -305,7 +359,8 @@ Sentry를 침묵시킨 것이 아니라 **소음만 걷어낸 것**입니다.
 | 항목 | 위치 |
 |---|---|
 | 스크러빙 | `backend/.../global/observability/SentryScrubber.java` |
-| 스크러빙 테스트 (7개) | `SentryScrubberTest` |
+| 스크러빙 테스트 | `SentryScrubberTest` (7), `SentryBreadcrumbScrubberTest` (6) |
+| breadcrumb 마스킹 | `SentryBreadcrumbScrubber`, `SensitiveTextRedactor` |
 | 수집 서버 스텁 | `tools/observability/sentry-stub/stub.py` |
 | 도메인 오류 코드 | `ErrorCode.FRIEND_REQUEST_ALREADY_EXISTS`, `FRIEND_REQUEST_FORBIDDEN` |
 
