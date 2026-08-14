@@ -245,7 +245,6 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
 - **지도 API의 레이트 리미터가 동시 요청에 동작하지 않습니다.** 의도는 초당 5회인데 동시 8건이면 초당 40회가 나갑니다. 모니터링을 붙이며 발견했고 아직 고치지 않았습니다. ([CS 06](docs/case-studies/06-monitoring.md))
-- **Grafana 대시보드를 실제 화면으로 확인하지 못했습니다.** 작업 환경의 Docker가 불안정해 `promtool`로 설정·쿼리 문법만 검증했습니다.
 - **Flutter 정적 분석은 error만 파이프라인을 막습니다.** `info` 지적(`avoid_print` 등)이 많아 우선 error만 막고 점진적으로 줄입니다.
 - **Sentry에 접속 IP 기반 위치가 저장됩니다.** SDK에서 IP를 지워도 Sentry가 수집 시점의 접속 IP로 지역을 역산합니다. 막으려면 프로젝트 설정에서 `Prevent Storing of IP Addresses`를 켜야 합니다.
 - **Sentry 알림 규칙이 없습니다.** 어떤 이벤트에 누구에게 알릴지는 정하지 않았습니다.
