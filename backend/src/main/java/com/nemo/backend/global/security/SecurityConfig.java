@@ -32,31 +32,8 @@ public class SecurityConfig {
 
                 // 권한 규칙
                 .authorizeHttpRequests(auth -> auth
-                        // 🔓 토큰 없이 접근 가능한 공개 엔드포인트
-                        .requestMatchers(
-                                "/h2-console/**",
-                                "/swagger-ui/**",
-                                "/v3/api-docs/**",
-                                "/files/**",
-                                "/actuator/health",
-                                "/actuator/info",
-
-                                "/api/users/signup",
-                                "/api/users/login",
-                                "/api/auth/logout",
-                                "/api/auth/oauth/**",
-
-                                // 이메일 인증
-                                "/api/auth/email/**",
-
-                                // 비밀번호 찾기 / 재설정
-                                "/api/auth/password/**",
-                                "/api/users/password/**",
-
-                                // 토큰 재발급 및 dev 시드
-                                "/api/auth/refresh",
-                                "/api/auth/dev/**"
-                        ).permitAll()
+                        // 🔓 토큰 없이 접근 가능한 공개 엔드포인트 (JwtAuthenticationFilter와 같은 목록을 공유)
+                        .requestMatchers(PublicEndpoints.asArray()).permitAll()
 
                         // 🔒 그 외 모든 /api/** 는 인증 필요
                         .requestMatchers("/api/**").authenticated()
