@@ -1,11 +1,16 @@
 {
   "title": "NEMO Backend",
   "uid": "nemo-backend",
-  "tags": ["nemo"],
+  "tags": [
+    "nemo"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "10s",
-  "time": { "from": "now-30m", "to": "now" },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
@@ -21,16 +26,31 @@
       "id": 1,
       "type": "row",
       "title": "요청",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
     },
     {
       "id": 2,
       "type": "timeseries",
       "title": "초당 요청 수 (엔드포인트별)",
       "description": "http_server_requests_seconds_count의 증가율. 어떤 API가 실제로 쓰이는지 본다.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
       "fieldConfig": {
-        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } },
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -46,17 +66,33 @@
       "type": "timeseries",
       "title": "응답시간 p95 (엔드포인트별)",
       "description": "느린 API를 찾는 핵심 패널. 평균은 소수의 느린 요청을 감춘다.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": { "fillOpacity": 0 },
+          "custom": {
+            "fillOpacity": 0
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 0.5 },
-              { "color": "red", "value": 2 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
             ]
           }
         },
@@ -65,7 +101,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le, uri) (rate(http_server_requests_seconds_bucket{job=\"nemo-backend\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, uri) (rate(http_server_requests_seconds_bucket{job=\"nemo-backend\"}[5m]))) and on (uri) (sum by (uri) (rate(http_server_requests_seconds_count{job=\"nemo-backend\"}[5m])) > 0)",
           "legendFormat": "{{uri}}"
         }
       ]
@@ -75,24 +111,36 @@
       "type": "stat",
       "title": "5xx 오류율",
       "description": "전체 요청 대비 서버 오류 비율. 0이 아니면 바로 확인한다.",
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 9 },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 9
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 0.01 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
             ]
-          }
+          },
+          "noValue": "0"
         },
         "overrides": []
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(http_server_requests_seconds_count{job=\"nemo-backend\", status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job=\"nemo-backend\"}[5m])), 0.0001)",
+          "expr": "(sum(rate(http_server_requests_seconds_count{job=\"nemo-backend\", status=~\"5..\"}[5m])) or vector(0)) / clamp_min(sum(rate(http_server_requests_seconds_count{job=\"nemo-backend\"}[5m])), 0.0001)",
           "legendFormat": "5xx"
         }
       ]
@@ -102,9 +150,22 @@
       "type": "timeseries",
       "title": "상태 코드별 요청",
       "description": "4xx가 갑자기 늘면 클라이언트 계약이 깨졌다는 신호일 수 있다.",
-      "gridPos": { "h": 5, "w": 18, "x": 6, "y": 9 },
+      "gridPos": {
+        "h": 5,
+        "w": 18,
+        "x": 6,
+        "y": 9
+      },
       "fieldConfig": {
-        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 20,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -119,16 +180,31 @@
       "id": 6,
       "type": "row",
       "title": "JVM / DB",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      }
     },
     {
       "id": 7,
       "type": "timeseries",
       "title": "JVM Heap 사용량",
-      "description": "used가 max에 계속 붙어 있으면 메모리 누수나 캐시 무한 증가를 의심한다.",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
+      "description": "used와 committed를 함께 본다. max는 컨테이너 기본값이 크게 잡혀 있어 같이 그리면 used가 바닥에 붙어 아무것도 읽히지 않는다. 한계 대비 여유는 옆의 사용률 패널로 본다.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 15
+      },
       "fieldConfig": {
-        "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } },
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -139,8 +215,8 @@
         },
         {
           "refId": "B",
-          "expr": "sum(jvm_memory_max_bytes{job=\"nemo-backend\", area=\"heap\"})",
-          "legendFormat": "max"
+          "expr": "sum(jvm_memory_committed_bytes{job=\"nemo-backend\", area=\"heap\"})",
+          "legendFormat": "committed (JVM이 확보한 양)"
         }
       ]
     },
@@ -149,9 +225,19 @@
       "type": "timeseries",
       "title": "DB Connection Pool (HikariCP)",
       "description": "pending이 0보다 크면 커넥션을 기다리는 요청이 있다는 뜻이다.",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 15
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -176,9 +262,19 @@
       "id": 9,
       "type": "timeseries",
       "title": "GC 일시정지",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 15
+      },
       "fieldConfig": {
-        "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } },
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -186,6 +282,53 @@
           "refId": "A",
           "expr": "sum by (cause) (rate(jvm_gc_pause_seconds_sum{job=\"nemo-backend\"}[1m]))",
           "legendFormat": "{{cause}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Heap 사용률",
+      "description": "used / max. 계속 차오르면 메모리 누수나 캐시 무한 증가를 의심한다. 바이트 그래프로는 이 추세가 안 보인다.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 15
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "fillOpacity": 10
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(jvm_memory_used_bytes{job=\"nemo-backend\", area=\"heap\"}) / clamp_min(sum(jvm_memory_max_bytes{job=\"nemo-backend\", area=\"heap\"}), 1)",
+          "legendFormat": "heap 사용률"
         }
       ]
     }

@@ -12,7 +12,7 @@ date: 2026-08-14
 |---|---|
 | **기간** | 2026-08-14 |
 | **범위** | Backend — Actuator/Micrometer, Prometheus, Grafana |
-| **발견** | 외부 API 호출률이 동시 요청 수에 정비례 (의도 5회/초 → 실제 40회/초) |
+| **발견** | 외부 API 호출률이 동시 요청 수에 정비례 (의도 5회/초 → 실제 40회/초). 대시보드 결함 3건 |
 | **증거** | 측정표 아래 · `promtool` 검증 · 대시보드 JSON |
 
 ---
@@ -122,7 +122,8 @@ UI에서 손으로 만든 대시보드는 컨테이너를 지우면 사라집니
 | **응답시간 p95 (엔드포인트별)** | 느린 API 특정 — 핵심 패널 |
 | 5xx 오류율 | 0이 아니면 즉시 확인 |
 | 상태 코드별 요청 | 4xx 급증 = 클라이언트 계약 파손 신호 |
-| JVM Heap | 계속 차오르면 누수·캐시 무한 증가 의심 |
+| JVM Heap 사용량 | `used`와 `committed`를 함께. GC 압박 관찰 |
+| Heap 사용률 | `used / max`. 계속 차오르면 누수·캐시 무한 증가 의심 |
 | DB Connection Pool | `pending > 0` = 커넥션 대기 발생 |
 | GC 일시정지 | 응답시간 튐의 원인 확인 |
 
@@ -143,8 +144,48 @@ UI에서 손으로 만든 대시보드는 컨테이너를 지우면 사라집니
 
 ```
 promtool check config infra/monitoring/prometheus.yml   → SUCCESS
-대시보드 PromQL 10개                                    → 전부 유효
+대시보드 PromQL                                          → 전부 유효
 ```
+
+### 그런데 실제로 띄우자 패널 3개가 잘못 표시되고 있었다 ⚠️
+
+문법 검증만으로는 부족했습니다. Prometheus와 Grafana를 올리고 부하를 준 뒤에야 드러났습니다.
+
+**① 5xx 오류율이 「No data」로 표시됐다**
+
+오류가 하나도 없으면 분자 시계열이 존재하지 않아 나눗셈 결과가 비어버립니다.
+**"오류 없음"과 "모니터링 고장"을 구분할 수 없는 상태**입니다.
+가장 봐야 할 패널인데 평상시에 아무것도 안 보이면 아무도 신뢰하지 않습니다.
+
+```promql
+(sum(rate(...{status=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(...[5m])), 0.0001)
+```
+
+`or vector(0)`과 `noValue: "0"`을 넣어 **0%가 초록색으로** 보이게 했습니다.
+
+**② p95 범례가 NaN으로 도배됐다**
+
+트래픽이 없는 엔드포인트도 전부 `NaN`으로 계산돼 범례를 채웁니다. 정작 느린 API가 묻힙니다.
+
+```promql
+histogram_quantile(0.95, ...) and on (uri) (sum by (uri) (rate(...[5m])) > 0)
+```
+
+**③ JVM Heap 패널을 읽을 수 없었다**
+
+`max`가 4 GiB인데 `used`는 150 MB라, 같이 그리면 used가 **바닥에 붙은 평평한 선**이 됩니다.
+메모리가 새는지 판단이 불가능한 패널이었습니다.
+
+- `max` 선을 빼고 **`committed`**(JVM이 실제로 확보한 양)를 넣었습니다 — 150MB vs 182MB로 같은 스케일
+- **Heap 사용률**(`used / max`) 패널을 따로 만들어 한계 대비 여유를 봅니다 (임계 70%/90%)
+
+수정 후 화면은 [`docs/evidence/screenshots/`](../evidence/screenshots/)에 있습니다.
+부하 구간이 모든 패널에 동시에 나타나는 것이 이 화면의 값어치입니다 —
+요청 수가 뛰고, p95가 따라 오르고, GC가 함께 튀는 것을 한 화면에서 봅니다.
+
+> 세 가지 모두 `promtool`을 통과한 쿼리였습니다.
+> **문법이 맞다는 것과 화면이 쓸모 있다는 것은 다릅니다.**
+> [CS 07](07-ci-cd.md)에서 CI를 실제로 돌려봐야 나온 결함들과 같은 이야기입니다.
 
 ### 지표가 즉시 보여준 것
 
@@ -212,8 +253,8 @@ lastCallAt.set(System.currentTimeMillis());    // ③ 쓴다
 
 **아직 확인하지 않은 것**
 
-- **Grafana 화면을 실제로 띄워보지 못했습니다.** 작업 환경의 Docker Desktop이 반복해서 죽어
-  `promtool`로 설정·쿼리 문법만 검증했습니다. 컨테이너 기동 검증은 남아 있습니다.
+- **부하가 낮은 상태의 화면만 확인했습니다.** 실제 트래픽 패턴에서 임계값(p95 0.5s/2s,
+  heap 70%/90%)이 적절한지는 아직 모릅니다.
 - **알림(Alert)은 설정하지 않았습니다.** p95나 5xx가 임계치를 넘을 때 알려주는 규칙이 필요합니다.
 - **외부 API 호출은 지표에 안 잡힙니다.** `http_server_requests`는 들어오는 요청만 봅니다.
   지도 API가 7초인 것은 보이지만 그중 8.2초가 외부 호출 대기라는 것은 지표만으로는 모릅니다.
@@ -229,6 +270,7 @@ lastCallAt.set(System.currentTimeMillis());    // ③ 쓴다
 | Prometheus 설정 | `infra/monitoring/prometheus.yml` |
 | Grafana 프로비저닝·대시보드 | `infra/monitoring/grafana/` |
 | compose 서비스 | `compose.yaml` (`--profile monitoring`) |
+| **대시보드 화면** | [`docs/evidence/screenshots/`](../evidence/screenshots/) — Image Renderer로 자동 생성 |
 
 ```bash
 # 앱 실행 후
