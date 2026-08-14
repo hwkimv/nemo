@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -33,6 +34,10 @@ public interface PhotoRepository extends JpaRepository<Photo, Long> {
 
     // ✅ 특정 사진이 살아있는지 검사할 때 사용
     Optional<Photo> findByIdAndDeletedIsFalse(Long id);
+
+    // ✅ 앨범에 넣어도 되는 사진만 조회 (요청자 소유 + 미삭제)
+    //    findAllById()와 달리 userId 조건이 들어 있어, 남의 사진 ID는 애초에 결과에 나오지 않는다.
+    List<Photo> findAllByIdInAndUserIdAndDeletedIsFalse(Collection<Long> ids, Long userId);
 
     // ✅ 타임라인용: 촬영일시 기준 내림차순 전체 조회 (그대로 유지)
     List<Photo> findByUserIdAndDeletedIsFalseOrderByTakenAtDesc(Long userId);

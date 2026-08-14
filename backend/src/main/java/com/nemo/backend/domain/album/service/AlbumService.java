@@ -4,6 +4,7 @@ package com.nemo.backend.domain.album.service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -188,11 +189,10 @@ public class AlbumService {
         Album saved = albumRepository.save(album);
 
         // 초기 사진 지정
+        // ⚠️ photoIdList와 coverPhotoId는 클라이언트가 보낸 값이다.
+        //    requireUsablePhotos()가 "요청자 소유 + 미삭제"인 사진만 통과시키고, 하나라도 아니면 요청 전체를 실패시킨다.
         if (req.getPhotoIdList() != null && !req.getPhotoIdList().isEmpty()) {
-            List<Photo> photos = photoRepository.findAllById(req.getPhotoIdList());
-            List<Photo> alivePhotos = photos.stream()
-                    .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                    .toList();
+            List<Photo> alivePhotos = requireUsablePhotos(userId, req.getPhotoIdList());
 
             if (saved.getPhotos() == null) {
                 saved.setPhotos(new ArrayList<>());
@@ -204,12 +204,7 @@ public class AlbumService {
                 alivePhotos.stream()
                         .filter(p -> req.getCoverPhotoId().equals(p.getId()))
                         .findFirst()
-                        .ifPresent(p -> {
-                            String thumb = (p.getThumbnailUrl() != null && !p.getThumbnailUrl().isBlank())
-                                    ? p.getThumbnailUrl()
-                                    : p.getImageUrl();
-                            saved.setCoverPhotoUrl(thumb);
-                        });
+                        .ifPresent(p -> saved.setCoverPhotoUrl(coverUrlOf(p)));
             }
         }
 
@@ -217,29 +212,63 @@ public class AlbumService {
         if (req.getCoverPhotoId() != null &&
                 (saved.getCoverPhotoUrl() == null || saved.getCoverPhotoUrl().isBlank())) {
 
-            photoRepository.findByIdAndDeletedIsFalse(req.getCoverPhotoId())
-                    .ifPresent(p -> {
-                        String thumb = (p.getThumbnailUrl() != null && !p.getThumbnailUrl().isBlank())
-                                ? p.getThumbnailUrl()
-                                : p.getImageUrl();
-                        saved.setCoverPhotoUrl(thumb);
+            // cover 경로도 같은 소유권 정책을 쓴다. 여기가 열려 있으면
+            // photoIdList를 막아도 coverPhotoId로 남의 사진 URL을 얻어낼 수 있다.
+            Photo cover = requireUsablePhotos(userId, List.of(req.getCoverPhotoId())).get(0);
+            saved.setCoverPhotoUrl(coverUrlOf(cover));
 
-                        // 앨범에 아직 없는 사진이면 같이 추가
-                        if (saved.getPhotos() == null) {
-                            saved.setPhotos(new ArrayList<>());
-                        }
-                        boolean exists = saved.getPhotos().stream()
-                                .anyMatch(existing -> existing.getId().equals(p.getId()));
-                        if (!exists) {
-                            saved.getPhotos().add(p);
-                        }
-                    });
+            // 앨범에 아직 없는 사진이면 같이 추가
+            if (saved.getPhotos() == null) {
+                saved.setPhotos(new ArrayList<>());
+            }
+            boolean exists = saved.getPhotos().stream()
+                    .anyMatch(existing -> existing.getId().equals(cover.getId()));
+            if (!exists) {
+                saved.getPhotos().add(cover);
+            }
         }
 
         // 최종적으로 커버가 비어 있으면 자동 썸네일
         autoSetThumbnailIfMissing(saved);
 
         return toDetail(saved, "OWNER");
+    }
+
+    /**
+     * 앨범에 넣어도 되는 사진만 돌려준다. 하나라도 쓸 수 없으면 요청 전체를 실패시킨다.
+     *
+     * 정책: <b>요청자가 소유한, 삭제되지 않은 사진만 허용</b>한다.
+     * 앨범 편집 권한(OWNER/EDITOR)과 사진 사용 권한은 별개다. 공유 앨범의 EDITOR라도
+     * 남의 사진을 끌어올 수는 없다. 현재 규모에서 가장 단순하고 안전한 기본값이며,
+     * 공유 편집 정책이 필요해지면 그때 명시적으로 넓힌다.
+     *
+     * 조용히 일부만 추가하지 않는 이유: 사용자는 10장을 골랐는데 7장만 들어가면
+     * 무엇이 왜 빠졌는지 알 수 없고, 공격자에게는 "어떤 ID가 통과하는지" 알려주는 신호가 된다.
+     */
+    private List<Photo> requireUsablePhotos(Long userId, List<Long> requestedIds) {
+        if (requestedIds == null || requestedIds.isEmpty()) {
+            return List.of();
+        }
+        if (requestedIds.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "사진 ID에 null이 포함될 수 없습니다.");
+        }
+
+        // 같은 ID를 여러 번 보내도 개수 비교가 어긋나지 않도록 중복 제거 후 비교한다.
+        Set<Long> uniqueIds = new LinkedHashSet<>(requestedIds);
+
+        List<Photo> usable = photoRepository.findAllByIdInAndUserIdAndDeletedIsFalse(uniqueIds, userId);
+
+        if (usable.size() != uniqueIds.size()) {
+            // 존재하지 않음 / 삭제됨 / 남의 사진을 구분해 알려주지 않는다. (존재 여부 탐색 방지)
+            throw new ApiException(ErrorCode.PHOTO_NOT_USABLE);
+        }
+        return usable;
+    }
+
+    /** 커버로 쓸 URL: 썸네일이 있으면 썸네일, 없으면 원본 */
+    private String coverUrlOf(Photo photo) {
+        String thumb = photo.getThumbnailUrl();
+        return (thumb != null && !thumb.isBlank()) ? thumb : photo.getImageUrl();
     }
 
     // 4) 앨범에 사진 추가 / 제거
@@ -252,7 +281,9 @@ public class AlbumService {
             throw new ApiException(ErrorCode.FORBIDDEN, "해당 앨범에 사진을 추가할 권한이 없습니다.");
         }
 
-        List<Photo> photos = photoRepository.findAllById(photoIdList);
+        // canManagePhotos()는 "이 앨범을 수정할 수 있는가"만 본다.
+        // "추가하려는 사진을 쓸 수 있는가"는 완전히 다른 질문이므로 여기서 따로 검증한다.
+        List<Photo> photos = requireUsablePhotos(userId, photoIdList);
 
         if (album.getPhotos() == null) {
             album.setPhotos(new ArrayList<>());
@@ -260,9 +291,6 @@ public class AlbumService {
 
         int count = 0;
         for (Photo p : photos) {
-            if (Boolean.TRUE.equals(p.getDeleted())) {
-                continue;
-            }
             boolean alreadyExists = album.getPhotos().stream()
                     .anyMatch(existing -> existing.getId().equals(p.getId()));
             if (!alreadyExists) {
