@@ -67,6 +67,11 @@ Spring Boot API
         │
         ├─ PostgreSQL (Supabase) — 사용자·사진 메타데이터·관계
         └─ S3 / LocalStack       — 원본·압축본·썸네일
+
+관측
+  RequestIdFilter ──> 모든 로그에 같은 requestId (응답 헤더 X-Request-Id)
+  Actuator/Micrometer ──> Prometheus ──> Grafana   (운영은 별도 관리 포트)
+  GlobalExceptionHandler ──> Sentry                (전송 전 토큰·PII 제거)
 ```
 
 ### 왜 이 구조인가
@@ -102,10 +107,26 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 
 팀 작업 이후 혼자 진행한 작업입니다. 전부 [Case Study](#case-studies)로 근거를 남겼습니다.
 
-- **JWT 인증 테스트 37개** — 클럭 스큐 3분과 `isExpired()`의 실제 동작을 테스트로 규명
-- **Supabase PostgreSQL 전환 및 런타임 하드닝** — 프로필 분리, 운영 공개 표면 차단
-- **인증·권한 경계 결함 4건 수정** — 타인 사진 접근 차단, 토큰 로그 제거
-- **앨범 목록 N+1 제거** — DB 쿼리 202 → 4, 응답 99ms → 11ms (같은 환경 Before/After 측정)
+**보안·인증**
+- JWT 인증 테스트 37개 — 클럭 스큐 3분과 `isExpired()`의 실제 동작을 규명
+- 인증·권한 경계 결함 4건 수정 — 타인 사진 접근 차단, 토큰 로그 제거
+- Supabase PostgreSQL 전환 및 런타임 하드닝 — 프로필 분리, 운영 공개 표면 차단
+
+**성능**
+- 앨범 목록 N+1 제거 — DB 쿼리 202 → 4, 응답 99ms → 11ms (**같은 환경 Before/After**)
+- 타임라인·페이지네이션을 DB로 이동, 인덱스 효과를 20만 행에서 측정
+- 지도 API 캐시 효과 측정 — 외부 호출 820 → 0회
+
+**관측·운영**
+- Actuator → Prometheus → Grafana. 지표로 **동시성 결함**을 찾아냄
+- Sentry — 실제 예외를 수집해 원인까지 수정. 토큰·breadcrumb 스크러빙
+- GitHub Actions — 테스트 실패 시 이미지 빌드 차단
+
+**정합성**
+- 동시 업로드가 저장 한도를 넘던 문제 — 깨지는 것을 먼저 증명하고 수정
+
+> 이 과정에서 **계획에 없던 결함 13건**을 추가로 발견해 고쳤습니다.
+> 대부분은 "만들어서"가 아니라 **"확인해봐서"** 나왔습니다.
 
 ### 팀원 주도
 
@@ -143,11 +164,16 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 
 ## 기술 스택
 
-**Backend** — Java 21 · Spring Boot 3.5.3 · Spring Security + JWT(jjwt) · Spring Data JPA · springdoc-openapi · Actuator · AWS SDK v2 (S3) · ZXing(QR) · Jsoup
+**Backend** — Java 21 · Spring Boot 3.5.3 · Spring Security + JWT(jjwt) · Spring Data JPA · springdoc-openapi · AWS SDK v2 (S3) · ZXing(QR) · Jsoup
+
+**관측·검증** — Actuator + Micrometer(Prometheus) · Grafana · Sentry · JUnit5 + AssertJ · k6 · GitHub Actions
 
 **Frontend** — Flutter (Dart SDK 3.8+) · provider · http · flutter_naver_map · mobile_scanner(QR) · image_picker · geolocator
 
 **Data / Infra** — PostgreSQL(Supabase, 운영) · H2(개발) · MariaDB(레거시) · LocalStack · Docker · Nginx
+
+> 캐시는 **`ConcurrentHashMap` + TTL 2분**입니다. Caffeine이나 Redis가 아닙니다.
+> Redis는 다중 인스턴스 요구가 실제로 생기면 검토합니다 — 지금은 근거가 없어 넣지 않았습니다.
 
 ## 실행
 
