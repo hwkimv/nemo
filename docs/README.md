@@ -32,6 +32,7 @@
 | [2026-08-05 성능 기준선](evidence/2026-08-05-baseline.md) | 개선 전 Before. 앨범 202 쿼리 / 121.21ms |
 | [2026-08-14 After 측정과 인덱스 판단](evidence/2026-08-14-after-and-index.md) | 같은 환경 Before/After, 실행 계획, 인덱스 비교 |
 | [2026-08-14 지도 API 캐시 측정](evidence/2026-08-14-map-cache.md) | 캐시 OFF/ON, 외부 호출 수, TTL 만료, 메모리 한계 |
+| [Grafana 대시보드 화면](evidence/screenshots/) | 실제 렌더링된 대시보드와 패널별 설명 |
 
 **재현 도구**는 `tools/`에 있습니다 — k6 스크립트, 시드 SQL, 실행 계획 SQL, 인덱스 SQL,
 네이버 API 스텁(`tools/performance/`), Sentry 수집 스텁(`tools/observability/`).

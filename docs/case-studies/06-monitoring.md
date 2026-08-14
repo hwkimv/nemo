@@ -179,6 +179,10 @@ histogram_quantile(0.95, ...) and on (uri) (sum by (uri) (rate(...[5m])) > 0)
 - `max` 선을 빼고 **`committed`**(JVM이 실제로 확보한 양)를 넣었습니다 — 150MB vs 182MB로 같은 스케일
 - **Heap 사용률**(`used / max`) 패널을 따로 만들어 한계 대비 여유를 봅니다 (임계 70%/90%)
 
+수정 후 화면은 [`docs/evidence/screenshots/`](../evidence/screenshots/)에 있습니다.
+부하 구간이 모든 패널에 동시에 나타나는 것이 이 화면의 값어치입니다 —
+요청 수가 뛰고, p95가 따라 오르고, GC가 함께 튀는 것을 한 화면에서 봅니다.
+
 > 세 가지 모두 `promtool`을 통과한 쿼리였습니다.
 > **문법이 맞다는 것과 화면이 쓸모 있다는 것은 다릅니다.**
 > [CS 07](07-ci-cd.md)에서 CI를 실제로 돌려봐야 나온 결함들과 같은 이야기입니다.
@@ -266,6 +270,7 @@ lastCallAt.set(System.currentTimeMillis());    // ③ 쓴다
 | Prometheus 설정 | `infra/monitoring/prometheus.yml` |
 | Grafana 프로비저닝·대시보드 | `infra/monitoring/grafana/` |
 | compose 서비스 | `compose.yaml` (`--profile monitoring`) |
+| **대시보드 화면** | [`docs/evidence/screenshots/`](../evidence/screenshots/) — Image Renderer로 자동 생성 |
 
 ```bash
 # 앱 실행 후
