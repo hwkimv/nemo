@@ -155,6 +155,11 @@ public class PhotoServiceImpl implements PhotoService {
         );
         photo.setMemo(memo);
 
+        // 저장 직전에 한도를 다시 확인한다. 이번에는 사용자 행을 잠근 채로 센다.
+        // 위쪽 checkPhotoLimitOrThrow()는 느린 파일 저장 전에 미리 거절하기 위한 것이고,
+        // 세는 시점과 INSERT 시점 사이의 틈은 여기서만 닫힌다.
+        storageService.reserveQuotaOrThrow(userId);
+
         Photo saved = photoRepository.save(photo);
         return new PhotoResponseDto(saved);
     }

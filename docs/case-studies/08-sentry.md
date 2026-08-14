@@ -13,7 +13,7 @@ date: 2026-08-14
 | **기간** | 2026-08-14 |
 | **범위** | Backend — Sentry SDK, 스크러빙, 친구 도메인 예외 |
 | **결과** | 중복 친구 요청 **500 → 409**, Sentry 이벤트 **1건 → 0건** |
-| **증거** | 실제 수집된 이벤트 payload, `SentryScrubberTest` (7) |
+| **증거** | 실제 Sentry UI에서 확인한 이벤트, 스크러빙 테스트 13개 |
 
 ---
 
@@ -32,11 +32,11 @@ date: 2026-08-14
 
 ## Analyze / Constraints
 
-**제약 1 — Sentry 계정이 없습니다.**
+**제약 1 — 무엇이 나가는지 먼저 알아야 합니다.**
 
-DSN 없이는 "수집됐다"를 확인할 수 없습니다. 그렇다고 계정을 만들어 실제 서비스로
-테스트 이벤트를 보내면, **무엇이 전송되는지 확인하기 전에 이미 보낸 뒤**가 됩니다.
-토큰이 섞여 있었다면 늦습니다.
+실제 서비스로 테스트 이벤트를 먼저 보내면 **무엇이 전송되는지 확인하기 전에 이미 보낸 뒤**가 됩니다.
+토큰이 섞여 있었다면 늦습니다. 그래서 순서를 정했습니다.
+**스텁으로 payload를 확인하고, 안전한 것을 본 뒤에 실제 DSN을 연결합니다.**
 
 → Sentry DSN은 결국 HTTP endpoint입니다. **그 자리에 스텁을 두면 SDK가 보내는
 envelope를 그대로 받아볼 수 있습니다.** ([CS 05](05-map-api-cache.md)의 Naver 스텁과 같은 방식)
@@ -162,6 +162,72 @@ NEMO 코드 프레임 (최근 순):
 
 **스택 트레이스가 원인 코드를 정확히 지목했습니다** — `FriendService line 51`.
 
+### 실제 Sentry 연결 확인
+
+스텁으로 payload를 검증한 뒤, 실제 DSN을 넣고 같은 경로를 다시 돌렸습니다.
+
+```
+INFO : Initializing SDK with DSN: 'https://...@o4511909740937216.ingest.us.sentry.io/...'
+DEBUG: Capturing event: 98598ec7b8f04b02937565369998a699
+DEBUG: Envelope sent successfully.
+DEBUG: Envelope flushed
+```
+
+외부 API가 죽은 상태로 지도를 조회해 **진짜 500을 만들었고**, 그 이벤트가 실제 Sentry로
+전송됐습니다. Sentry UI에서 저장된 이벤트를 열어 확인한 결과입니다.
+
+**전달 경로** — `mechanism: LogbackSentryAppender`
+
+이벤트가 servlet 통합이 아니라 **Logback appender를 통해** 들어왔습니다.
+`sentry-logback`을 추가한 이유(전역 핸들러가 예외를 삼켜 Sentry가 0건이던 문제)가
+UI 태그로 그대로 확인됩니다.
+
+**스택 트레이스** — 체인 3단으로 원인이 끝까지 보입니다.
+
+```
+RuntimeException: Naver Local API 호출 실패
+  → ResourceAccessException
+    → ConnectException: Connection refused
+
+NaverApiClient:170        searchLocal                ← 실제 실패 지점
+PhotoboothService:391     getPhotoboothsInViewport
+PhotoboothController:71   viewport
+JwtAuthenticationFilter:91
+```
+
+**HTTP Request** — 스크러빙 결과
+
+| 항목 | UI에 표시된 값 |
+|---|---|
+| Headers | `Accept`, `User-Agent` **둘뿐** |
+| `Authorization` | **없음** |
+| Query `token` | `[Filtered]` (보낸 값은 `DUMMY_NOT_REAL_123`) |
+| Cookies / Body | 없음 |
+| Users (이슈 집계) | **0명** |
+
+**헤더가 두 개만 남은 것이 허용 목록이 동작했다는 증거입니다.**
+Sentry 자체 스크러빙이었다면 `Authorization`이 `[Filtered]`로 *표시는* 됐을 것입니다.
+아예 없다는 것은 **전송 전에 지워졌다**는 뜻입니다.
+
+### 뜻밖의 수확 — MDC의 requestId가 이벤트에 실렸다
+
+Contexts에 이 값이 들어 있었습니다.
+
+```
+MDC   requestId   a5b9ed15
+```
+
+의도하고 넣은 것이 아니라 Sentry SDK가 MDC를 자동으로 수집한 것입니다.
+[CS 03](03-security-boundaries.md)에서 토큰 로그를 지우면서 넣었던 Request ID인데,
+결과적으로 이렇게 이어집니다.
+
+```
+Sentry 이벤트 → requestId → 서버 로그 검색 → 그 요청의 전체 흐름
+```
+
+**오류 추적과 로그 추적이 한 값으로 연결됐습니다.**
+토큰을 지운 자리를 메우려고 넣은 장치가 다른 도구에서 다시 쓰였습니다.
+
 ### 스크러빙 검증 — 실제 전송된 payload
 
 요청에 일부러 토큰을 넣어 보냈습니다.
@@ -188,6 +254,58 @@ user    : {}
 | `token=SUPERSECRET123` | **`token=[redacted]`** |
 | 쿠키·본문·환경변수 | **없음** |
 | `debugParam=abc` | 남음 (진단에 필요) |
+
+### 발견 ③ — breadcrumb은 스크러버를 거치지 않는다
+
+UI에서 이벤트를 확인하다가 Breadcrumbs에 우리 로그가 그대로 실려 있는 것을 봤습니다.
+
+```
+[NAVER][EX][LOCAL] attempt 3/3 → 2000ms 대기 후 재시도.
+uri=http://localhost:9/dead?query=...&display=5&start=1&sort=random
+```
+
+`SentryScrubber`는 `event.request`와 `event.user`만 손봅니다. **breadcrumb은 건드리지 않습니다.**
+그런데 설정이 이렇습니다.
+
+```yaml
+sentry.logging.minimum-breadcrumb-level: info
+```
+
+**INFO 이상 로그가 전부 breadcrumb으로 Sentry에 실려 갑니다.**
+누군가 `log.info("... token={}", token)` 한 줄을 추가하면, request 스크러빙을 아무리
+촘촘히 해도 그 값은 그대로 나갑니다.
+
+> 당시 실제로 새는 값은 없었습니다. 네이버 자격증명은 헤더로 나가고 URI엔 없으며,
+> [CS 03](03-security-boundaries.md)에서 `Authorization` 로그를 이미 지웠기 때문입니다.
+> **하지만 구조적으로 뚫려 있었습니다.**
+
+이 구조는 헤더를 허용 목록으로 처리한 이유와 같습니다.
+**새로 추가되는 것이 기본적으로 안전한 쪽에 서야 합니다.**
+로그는 계속 추가되고, 추가하는 사람이 Sentry를 떠올릴 것이라고 기대할 수 없습니다.
+
+`SentryBreadcrumbScrubber`를 추가했습니다. 로그 메시지는 구조가 없어 이름으로 판단할 수
+없으므로 **모양으로** 찾습니다.
+
+| 패턴 | 예 |
+|---|---|
+| 이름이 붙은 비밀값 | `token=...`, `password:...`, `client_secret=...` |
+| 인증 스킴 | `Bearer ...`, `Basic ...` |
+| JWT 모양 | `eyJ...` 세 토막 |
+| data 맵 키 | 키 이름이 민감하면 값 전체 |
+
+**실제 전송 payload로 확인**했습니다. 네이버 엔드포인트에 일부러 `token=LEAKED_VIA_BREADCRUMB_999`를
+넣어 로그에 찍히게 만든 뒤 이벤트를 받아봤습니다.
+
+```
+uri=http://localhost:9/dead?token=[redacted]&query=%ED%8F%AC%ED%86%A0%EB%B6%80%EC%8A%A4&display=5
+LEAKED 문자열 포함: False
+```
+
+진단에 필요한 `query=`, `display=`는 남고 비밀값만 가려졌습니다.
+
+> **한계** — 모양이 특이하지 않은 비밀값(예: 짧은 인증코드)은 걸러내지 못합니다.
+> 이건 **마지막 그물이지 첫 번째 방어선이 아닙니다.**
+> 애초에 로그에 비밀값을 찍지 않는 것이 먼저입니다.
 
 ### 발견 ② — 정상적인 사용자 상황이 500이었다
 
@@ -217,10 +335,17 @@ Sentry를 침묵시킨 것이 아니라 **소음만 걷어낸 것**입니다.
 
 ## Limit / Next Condition
 
-- **실제 Sentry 서비스에 연결해보지 못했습니다.** 계정이 없어 스텁으로 검증했습니다.
-  전송되는 payload는 동일하지만, Sentry UI의 그룹핑·알림 규칙은 확인하지 못했습니다.
-  DSN을 넣으면 그대로 동작해야 합니다.
+- **접속 IP로 역산한 위치가 저장됩니다.** UI의 User Context에 `Dobong-gu, South Korea (KR)`이
+  붙어 있었습니다. 우리 스크러버는 `User.ipAddress`를 지우지만, **Sentry가 수집 시점의
+  접속 IP로 지역을 역산**합니다. SDK 쪽에서는 막을 수 없습니다.
+  → 필요하면 Sentry 프로젝트 설정의 **Security & Privacy → Prevent Storing of IP Addresses**를 켭니다.
+- **머신 호스트명이 태그로 나갑니다.** `server_name: HWdesktop.localdomain`.
+  운영에서는 컨테이너 ID라 위험이 작지만, 나가고 있다는 사실은 알고 있어야 합니다.
+- **Event API로 이벤트를 조회하지는 못했습니다.** 온보딩에서 발급된 auth token이
+  `project:releases` 범위라 403이었습니다. 확인은 UI에서 했습니다.
 - **알림 규칙이 없습니다.** 어떤 이벤트에 누구에게 알릴지는 정하지 않았습니다.
+- **breadcrumb 마스킹은 모양으로 찾습니다.** 이름표 없는 짧은 비밀값은 걸러내지 못합니다.
+  로그에 비밀값을 찍지 않는 것이 먼저이고, 이건 마지막 그물입니다.
 - **`release` 값이 비어 있습니다.** CI에서 커밋 SHA를 주입하면 이벤트와 배포를 이을 수 있습니다.
 - **남은 `IllegalStateException`이 다른 도메인에도 있을 수 있습니다.**
   친구 도메인만 정리했습니다. 같은 기준으로 전수 점검이 필요합니다.
@@ -234,7 +359,8 @@ Sentry를 침묵시킨 것이 아니라 **소음만 걷어낸 것**입니다.
 | 항목 | 위치 |
 |---|---|
 | 스크러빙 | `backend/.../global/observability/SentryScrubber.java` |
-| 스크러빙 테스트 (7개) | `SentryScrubberTest` |
+| 스크러빙 테스트 | `SentryScrubberTest` (7), `SentryBreadcrumbScrubberTest` (6) |
+| breadcrumb 마스킹 | `SentryBreadcrumbScrubber`, `SensitiveTextRedactor` |
 | 수집 서버 스텁 | `tools/observability/sentry-stub/stub.py` |
 | 도메인 오류 코드 | `ErrorCode.FRIEND_REQUEST_ALREADY_EXISTS`, `FRIEND_REQUEST_FORBIDDEN` |
 

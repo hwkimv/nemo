@@ -1,7 +1,11 @@
 package com.nemo.backend.domain.user.repository;
 
 import com.nemo.backend.domain.user.entity.User;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
@@ -17,6 +21,19 @@ import java.util.Optional;
  */
 @Repository
 public interface UserRepository extends JpaRepository<User, Long> {
+
+    /**
+     * 저장 한도 확인용 사용자 조회 (행 잠금).
+     *
+     * 사진 저장 한도는 "행 개수"에 대한 조건이라 DB unique 제약으로 막을 수 없다.
+     * 세는 시점과 넣는 시점 사이에 다른 요청이 끼어들면 둘 다 통과한다.
+     * 같은 사용자에 대한 업로드를 이 행 잠금으로 줄 세워 그 틈을 없앤다.
+     *
+     * 반드시 호출자의 트랜잭션 안에서 쓴다. 잠금은 그 트랜잭션이 커밋될 때 풀린다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :id")
+    Optional<User> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * ✅ 이메일로 사용자 조회
