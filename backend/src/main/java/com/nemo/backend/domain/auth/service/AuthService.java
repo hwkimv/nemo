@@ -46,6 +46,7 @@ public class AuthService {
     private final JwtUtil jwtUtil;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final RefreshTokenMaintenance refreshTokenMaintenance;
 
     // 🔽 새로 추가
     private final AlbumRepository albumRepository;
@@ -205,7 +206,13 @@ public class AuthService {
     // =======================
     // 5) Access Token 재발급
     // =======================
-    @Transactional(readOnly = true)
+    // ⚠️ readOnly = true 로 두면 안 된다.
+    // 이 메서드는 조회만 하는 것처럼 보이지만 실제로는 세 가지 쓰기를 한다.
+    //  1) 만료된 Refresh Token row 삭제
+    //  2) 만료 임박 시 token 값·expiry 회전 후 저장
+    // readOnly 트랜잭션은 flush 모드가 MANUAL이라 위 변경이 조용히 유실될 수 있다.
+    // (클래스 레벨 @Transactional을 그대로 쓰도록 override를 제거)
+    @Transactional
     public RefreshResponse refresh(RefreshRequest request) {
 
         if (request == null
@@ -221,8 +228,10 @@ public class AuthService {
         LocalDateTime now = LocalDateTime.now();
 
         // 만료 or 잘못된 토큰
+        // 삭제는 별도 트랜잭션에서 수행한다. 같은 트랜잭션에서 지우고 예외를 던지면
+        // 롤백과 함께 삭제도 되돌아가 만료 토큰이 계속 쌓인다.
         if (stored.getExpiry() == null || !stored.getExpiry().isAfter(now)) {
-            refreshTokenRepository.delete(stored);
+            refreshTokenMaintenance.deleteInSeparateTransaction(stored);
             throw new ApiException(ErrorCode.INVALID_TOKEN);
         }
 
