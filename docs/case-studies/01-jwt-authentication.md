@@ -50,16 +50,25 @@ String expired = sut.createAccessToken(USER_ID, EMAIL);
 
 ## Action
 
-테스트 37개를 두 파일로 나눴습니다.
+테스트를 두 파일로 나눴습니다. **실행되는 테스트는 37개**입니다.
 
-**`JwtUtilTest`** (29개) — 토큰 그 자체의 계약
+| 파일 | 테스트 메서드 | 실행 개수 |
+|---|---:|---:|
+| `JwtUtilTest` | 19 | 19 |
+| `JwtAuthenticationFilterTest` | 8 | **18** |
+| 합계 | 27 | **37** |
+
+필터 쪽 메서드가 8개인데 실행이 18개인 이유는, 공개 경로 11개를 하나의
+`@ParameterizedTest`로 전수 확인하기 때문입니다. 경로가 늘어나면 값 하나만 추가하면 됩니다.
+
+**`JwtUtilTest`** — 토큰 그 자체의 계약
 
 - 정상: 발급/검증 왕복, `Bearer` 접두사, 공백 처리, email 클레임 결손 시 `null`
 - 거절: 위조 서명, issuer 불일치, 만료, 구조 파손, 빈 문자열, `null`, userId 결손, userId 비숫자
 - 설정: 32자 미만 시크릿, `null` 시크릿
 - 경계: 클럭 스큐, Integer→Long 축소, `isExpired()` 실제 동작
 
-**`JwtAuthenticationFilterTest`** (8개) — 요청 단위 계약
+**`JwtAuthenticationFilterTest`** — 요청 단위 계약
 
 - 공개 경로 11개를 파라미터화 테스트로 전수 확인
 - 헤더 없음 / 위조 / 만료 → 401, `Content-Type: application/json`, **체인 끊김**(`chain.getRequest() == null`)
@@ -90,6 +99,9 @@ BUILD SUCCESSFUL in 42s
 
 48 tests, 0 failures, 0 errors   (기존 11 + 신규 37)
 ```
+
+> 이 시점 기준 48개입니다. 이후 [CS 03](03-security-boundaries.md)·[CS 04](04-query-performance.md)에서
+> 37개가 더해져 현재는 **86개**입니다.
 
 프로덕션 코드는 한 줄도 바꾸지 않았습니다. 전부 기존 동작을 그대로 고정한 것입니다.
 

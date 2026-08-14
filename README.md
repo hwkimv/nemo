@@ -10,6 +10,23 @@
 >
 > 팀 공동 작업은 원본 저장소에서 계속되고, 이 저장소에는 개인적으로 추가한 테스트·문서·배포 작업이 올라갑니다.
 
+---
+
+## 한눈에
+
+이 저장소에서 **개인적으로** 한 작업과 그 결과입니다. 모든 숫자는 재현 명령과 함께 문서에 있습니다.
+
+| 한 일 | 결과 | 근거 |
+|---|---|---|
+| 앨범 목록 N+1 제거 | DB 쿼리 **202 → 4**, 응답 **99ms → 11ms** | [CS 04](docs/case-studies/04-query-performance.md) |
+| 타임라인 조회를 DB 기간 쿼리로 | 응답 **8.3ms → 4.4ms**, 읽는 행 1,000 → 93 | [CS 04](docs/case-studies/04-query-performance.md) |
+| 앨범 목록 DB 페이지네이션 | 앨범 5,000개에서 **74ms → 8ms**, 앨범 수와 무관하게 고정 | [CS 04](docs/case-studies/04-query-performance.md) |
+| 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
+| 인증 경로 테스트 | 전체 **86개** (인증 37 + 보안 17 + 조회 20 + 기존) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
+| PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
+
+**측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
+
 ## WHY
 
 포토부스는 브랜드마다 사진 다운로드 방식과 보관 위치가 제각각입니다. 카카오톡으로 받은 것, 브랜드 앱에 남은 것, 갤러리에 저장한 것이 흩어지고, 시간이 지나면 "언제 누구와 어디서 찍었는지"라는 맥락이 먼저 사라집니다.
@@ -78,8 +95,12 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 
 ### 개인 고도화 (이 저장소)
 
-- **JWT 인증 테스트 37개** — [Case Study](docs/portfolio/case-study-jwt-authentication.md)
-- Supabase PostgreSQL 전환 및 런타임 하드닝 — [Case Study](docs/project/case-studies/2026-08-02-supabase-postgresql-runtime-hardening.md)
+팀 작업 이후 혼자 진행한 작업입니다. 전부 [Case Study](#case-studies)로 근거를 남겼습니다.
+
+- **JWT 인증 테스트 37개** — 클럭 스큐 3분과 `isExpired()`의 실제 동작을 테스트로 규명
+- **Supabase PostgreSQL 전환 및 런타임 하드닝** — 프로필 분리, 운영 공개 표면 차단
+- **인증·권한 경계 결함 4건 수정** — 타인 사진 접근 차단, 토큰 로그 제거
+- **앨범 목록 N+1 제거** — DB 쿼리 202 → 4, 응답 99ms → 11ms (같은 환경 Before/After 측정)
 
 ### 팀원 주도
 
@@ -90,12 +111,25 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 
 ## Case Studies
 
-| 주제 | 상태 | 핵심 증거 |
-|---|---|---|
-| [JWT 인증 경로에 검증 가능한 경계 세우기](docs/portfolio/case-study-jwt-authentication.md) | `Verified` | 테스트 37개, 클럭 스큐·`isExpired()` 동작 규명 |
-| [Supabase PostgreSQL 전환 후 런타임 하드닝](docs/project/case-studies/2026-08-02-supabase-postgresql-runtime-hardening.md) | `Verified` | 프로필 분리, 운영 smoke test, 개발용 표면 차단 |
+각 문서는 `문제 → 분석 → 선택지 → 실행 → 결과 → 한계` 순서입니다.
+**무엇을 만들었는지보다, 무엇을 비교하고 왜 그것을 골랐는지**를 적었습니다.
 
-문서 상태 규칙(`Draft` / `Verified` / `Historical`)은 [문서 허브](docs/project/README.md)에 있습니다.
+| # | 주제 | 핵심 결과 |
+|---|---|---|
+| 01 | [JWT 인증 경로에 검증 가능한 경계 세우기](docs/case-studies/01-jwt-authentication.md) | 테스트 37개. 클럭 스큐 3분과 `isExpired()`의 실제 동작 규명 |
+| 02 | [Supabase PostgreSQL 전환 후 런타임 하드닝](docs/case-studies/02-postgres-runtime-hardening.md) | 프로필 분리, 운영 smoke test, 개발용 표면 차단 |
+| 03 | [인증·권한 경계의 구멍 4개 막기](docs/case-studies/03-security-boundaries.md) | 타인 사진 접근 차단, 토큰 로그 제거. 회귀 테스트 17개 |
+| 04 | [앨범 목록 N+1 제거와 측정](docs/case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** |
+
+전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
+
+### 04번을 먼저 보시길 권합니다
+
+성능 개선을 측정하다 **코드를 한 줄도 바꾸지 않은 API가 3.6배 빨라져 있는 것**을 발견했습니다.
+9일 전 기준선과 비교하면 환경 덕분에 빨라진 몫까지 성과로 계산됩니다.
+
+그래서 같은 시각·같은 DB에서 이전 코드를 다시 측정하고, 바꾸지 않은 API를 대조군으로 삼아
+개선분을 분리했습니다. 이 저장소에서 성능 수치를 다루는 방식이 그 문서에 다 들어 있습니다.
 
 ## 기술 스택
 
@@ -131,13 +165,26 @@ Mock API는 `--dart-define=USE_MOCK_API=true`일 때만 켜집니다.
 cd backend && ./gradlew test
 ```
 
-48 tests. Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**86 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+
+성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
+
+```bash
+docker compose --profile benchmark up -d postgres-benchmark
+docker compose exec -T postgres-benchmark psql -U nemo_benchmark -d nemo_benchmark < tools/performance/sql/seed.sql
+cd backend && SPRING_PROFILES_ACTIVE=benchmark ./gradlew performanceBaseline --rerun-tasks --no-daemon
+k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
+```
 
 ## 알려진 한계
 
 포트폴리오 문서가 실제보다 앞서 나가지 않도록, 현재 확인되지 않은 것을 적어 둡니다.
 
-- 사진·앨범·타임라인 경로에는 아직 테스트가 없습니다. 인증 경로만 덮여 있습니다.
-- 성능 수치를 측정하지 않았습니다. Caffeine 캐시가 적용돼 있으나 적용 전후 호출 수·응답시간을 비교하지 않았습니다.
+- **조회 성능만 측정했습니다.** 앨범·타임라인·사진 조회는 Before/After가 있지만, 업로드·QR 경로는 측정하지 않았습니다.
+- **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
+- **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
+- **캐시 효과를 측정하지 않았습니다.** 지도 API에 `ConcurrentHashMap` + TTL 2분 로컬 캐시가 있지만 적용 전후 외부 호출 수·응답시간을 비교하지 않았습니다. (Caffeine이나 Redis가 아닙니다)
+- **사진 업로드·QR·친구 경로에는 아직 테스트가 없습니다.** 인증·앨범·타임라인 경로만 덮여 있습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
+- **S3에 연결되지 않으면 앱이 기동하지 않습니다.** 읽기 전용 API만 쓰는 경우에도 그렇습니다. 성능 측정 중 발견했고 아직 고치지 않았습니다.

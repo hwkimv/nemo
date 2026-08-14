@@ -226,7 +226,7 @@ CREATE INDEX ix_photos_user_effective_date
 - prod는 `ddl-auto=validate`인데, validate는 인덱스를 검사하지 않으므로
   수동 적용해도 기동을 막지는 않는다.
 
-→ SQL은 [`tools/performance/sql/indexes.sql`](../../../tools/performance/sql/indexes.sql)에 두고,
+→ SQL은 [`tools/performance/sql/indexes.sql`](../../tools/performance/sql/indexes.sql)에 두고,
 마이그레이션 도구 도입(P2-4)이 끝나면 정식 마이그레이션으로 옮긴다.
 
 ---
