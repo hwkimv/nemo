@@ -13,7 +13,7 @@ date: 2026-08-14
 | **기간** | 2026-08-14 |
 | **범위** | Backend — Sentry SDK, 스크러빙, 친구 도메인 예외 |
 | **결과** | 중복 친구 요청 **500 → 409**, Sentry 이벤트 **1건 → 0건** |
-| **증거** | 실제 수집된 이벤트 payload, `SentryScrubberTest` (7) |
+| **증거** | 실제 Sentry UI에서 확인한 이벤트, `SentryScrubberTest` (7) |
 
 ---
 
@@ -32,11 +32,11 @@ date: 2026-08-14
 
 ## Analyze / Constraints
 
-**제약 1 — Sentry 계정이 없습니다.**
+**제약 1 — 무엇이 나가는지 먼저 알아야 합니다.**
 
-DSN 없이는 "수집됐다"를 확인할 수 없습니다. 그렇다고 계정을 만들어 실제 서비스로
-테스트 이벤트를 보내면, **무엇이 전송되는지 확인하기 전에 이미 보낸 뒤**가 됩니다.
-토큰이 섞여 있었다면 늦습니다.
+실제 서비스로 테스트 이벤트를 먼저 보내면 **무엇이 전송되는지 확인하기 전에 이미 보낸 뒤**가 됩니다.
+토큰이 섞여 있었다면 늦습니다. 그래서 순서를 정했습니다.
+**스텁으로 payload를 확인하고, 안전한 것을 본 뒤에 실제 DSN을 연결합니다.**
 
 → Sentry DSN은 결국 HTTP endpoint입니다. **그 자리에 스텁을 두면 SDK가 보내는
 envelope를 그대로 받아볼 수 있습니다.** ([CS 05](05-map-api-cache.md)의 Naver 스텁과 같은 방식)
@@ -174,8 +174,59 @@ DEBUG: Envelope flushed
 ```
 
 외부 API가 죽은 상태로 지도를 조회해 **진짜 500을 만들었고**, 그 이벤트가 실제 Sentry로
-전송됐습니다. 스크러빙은 `beforeSend` 단계에서 일어나므로 전송 대상이 스텁이든 실제
-Sentry든 **같은 코드가 같은 결과를 만듭니다.**
+전송됐습니다. Sentry UI에서 저장된 이벤트를 열어 확인한 결과입니다.
+
+**전달 경로** — `mechanism: LogbackSentryAppender`
+
+이벤트가 servlet 통합이 아니라 **Logback appender를 통해** 들어왔습니다.
+`sentry-logback`을 추가한 이유(전역 핸들러가 예외를 삼켜 Sentry가 0건이던 문제)가
+UI 태그로 그대로 확인됩니다.
+
+**스택 트레이스** — 체인 3단으로 원인이 끝까지 보입니다.
+
+```
+RuntimeException: Naver Local API 호출 실패
+  → ResourceAccessException
+    → ConnectException: Connection refused
+
+NaverApiClient:170        searchLocal                ← 실제 실패 지점
+PhotoboothService:391     getPhotoboothsInViewport
+PhotoboothController:71   viewport
+JwtAuthenticationFilter:91
+```
+
+**HTTP Request** — 스크러빙 결과
+
+| 항목 | UI에 표시된 값 |
+|---|---|
+| Headers | `Accept`, `User-Agent` **둘뿐** |
+| `Authorization` | **없음** |
+| Query `token` | `[Filtered]` (보낸 값은 `DUMMY_NOT_REAL_123`) |
+| Cookies / Body | 없음 |
+| Users (이슈 집계) | **0명** |
+
+**헤더가 두 개만 남은 것이 허용 목록이 동작했다는 증거입니다.**
+Sentry 자체 스크러빙이었다면 `Authorization`이 `[Filtered]`로 *표시는* 됐을 것입니다.
+아예 없다는 것은 **전송 전에 지워졌다**는 뜻입니다.
+
+### 뜻밖의 수확 — MDC의 requestId가 이벤트에 실렸다
+
+Contexts에 이 값이 들어 있었습니다.
+
+```
+MDC   requestId   a5b9ed15
+```
+
+의도하고 넣은 것이 아니라 Sentry SDK가 MDC를 자동으로 수집한 것입니다.
+[CS 03](03-security-boundaries.md)에서 토큰 로그를 지우면서 넣었던 Request ID인데,
+결과적으로 이렇게 이어집니다.
+
+```
+Sentry 이벤트 → requestId → 서버 로그 검색 → 그 요청의 전체 흐름
+```
+
+**오류 추적과 로그 추적이 한 값으로 연결됐습니다.**
+토큰을 지운 자리를 메우려고 넣은 장치가 다른 도구에서 다시 쓰였습니다.
 
 ### 스크러빙 검증 — 실제 전송된 payload
 
@@ -232,9 +283,14 @@ Sentry를 침묵시킨 것이 아니라 **소음만 걷어낸 것**입니다.
 
 ## Limit / Next Condition
 
-- **Sentry UI에서 저장된 이벤트를 직접 열어보지는 못했습니다.** 전송까지는 확인했습니다(아래).
-  온보딩에서 발급된 auth token이 `project:releases` 범위라 Event API 조회가 403이었습니다.
-  UI 확인이나 API 조회가 필요하면 `event:read` 범위 토큰을 따로 발급해야 합니다.
+- **접속 IP로 역산한 위치가 저장됩니다.** UI의 User Context에 `Dobong-gu, South Korea (KR)`이
+  붙어 있었습니다. 우리 스크러버는 `User.ipAddress`를 지우지만, **Sentry가 수집 시점의
+  접속 IP로 지역을 역산**합니다. SDK 쪽에서는 막을 수 없습니다.
+  → 필요하면 Sentry 프로젝트 설정의 **Security & Privacy → Prevent Storing of IP Addresses**를 켭니다.
+- **머신 호스트명이 태그로 나갑니다.** `server_name: HWdesktop.localdomain`.
+  운영에서는 컨테이너 ID라 위험이 작지만, 나가고 있다는 사실은 알고 있어야 합니다.
+- **Event API로 이벤트를 조회하지는 못했습니다.** 온보딩에서 발급된 auth token이
+  `project:releases` 범위라 403이었습니다. 확인은 UI에서 했습니다.
 - **알림 규칙이 없습니다.** 어떤 이벤트에 누구에게 알릴지는 정하지 않았습니다.
 - **`release` 값이 비어 있습니다.** CI에서 커밋 SHA를 주입하면 이벤트와 배포를 이을 수 있습니다.
 - **남은 `IllegalStateException`이 다른 도메인에도 있을 수 있습니다.**
