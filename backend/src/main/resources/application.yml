@@ -94,6 +94,28 @@ management:
         http.server.requests: 50ms, 100ms, 200ms, 500ms, 1s, 2s, 5s
 
 # =============================
+# Sentry 오류 추적
+# =============================
+# DSN이 비어 있으면 SDK가 비활성 상태로 동작한다. 로컬·CI·테스트에서는 아무것도 전송하지 않는다.
+# 운영에서만 GitHub Secrets/환경변수로 주입한다. DSN은 저장소에 커밋하지 않는다.
+#
+# 보내기 전에 SentryScrubber가 Authorization 헤더·쿠키·요청 본문·환경변수를 제거한다.
+# 서버 로그에서 토큰을 지웠는데 오류 추적 도구로 같은 값이 나가면 지운 의미가 없다.
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: ${SENTRY_ENVIRONMENT:local}
+  # 배포된 코드와 이벤트를 잇는 값. CI에서 커밋 SHA를 넣는다.
+  release: ${SENTRY_RELEASE:}
+  # 예외만 받는다. 성능 추적은 Prometheus/Grafana가 이미 하고 있어 중복이다.
+  traces-sample-rate: 0
+  # 이벤트에 요청 정보를 붙이되, 아래 두 값은 SDK가 자동으로 개인정보를 담지 않게 한다.
+  send-default-pii: false
+  max-request-body-size: none
+  logging:
+    minimum-event-level: error
+    minimum-breadcrumb-level: info
+
+# =============================
 # 로깅
 # =============================
 logging:

@@ -1,5 +1,7 @@
 package com.nemo.backend.domain.friend.service;
 
+import com.nemo.backend.global.exception.ApiException;
+import com.nemo.backend.global.exception.ErrorCode;
 import com.nemo.backend.domain.friend.dto.*;
 import com.nemo.backend.domain.friend.entity.Friend;
 import com.nemo.backend.domain.friend.entity.FriendStatus;
@@ -48,7 +50,8 @@ public class FriendService {
         boolean existsForward = friendRepository.existsByUserIdAndFriendId(meId, targetUserId);
         boolean existsBackward = friendRepository.existsByUserIdAndFriendId(targetUserId, meId);
         if (existsForward || existsBackward) {
-            throw new IllegalStateException("이미 친구 요청을 보냈거나 친구 상태입니다.");
+            // 예상 가능한 사용자 상황이다. 서버 오류(500)가 아니라 409로 알려준다.
+            throw new ApiException(ErrorCode.FRIEND_REQUEST_ALREADY_EXISTS);
         }
 
         // 3) 요청자와 대상 사용자 조회 (없으면 예외 발생)
@@ -212,7 +215,7 @@ public class FriendService {
         User requester = request.getUser(); // 요청 보낸 사용자
 
         if (!me.getId().equals(meId)) {
-            throw new IllegalStateException("해당 친구 요청을 수락할 권한이 없습니다.");
+            throw new ApiException(ErrorCode.FRIEND_REQUEST_FORBIDDEN, "해당 친구 요청을 수락할 권한이 없습니다.");
         }
 
         // 3) 상태 변경: PENDING → ACCEPTED
@@ -255,7 +258,7 @@ public class FriendService {
         // 2) 권한 체크: 이 요청의 대상이 내가 맞는지 확인
         User target = request.getFriend();
         if (!target.getId().equals(meId)) {
-            throw new IllegalStateException("해당 친구 요청을 거절할 권한이 없습니다.");
+            throw new ApiException(ErrorCode.FRIEND_REQUEST_FORBIDDEN, "해당 친구 요청을 거절할 권한이 없습니다.");
         }
 
         // 3) 현재 정책: 요청 row 자체 삭제

@@ -32,6 +32,14 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     // Actuator가 수집한 지표를 Prometheus가 읽을 수 있는 형식으로 노출
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+    // 오류 추적. DSN이 비어 있으면 SDK가 비활성 상태로 동작한다(로컬·CI에서 아무것도 전송하지 않음)
+    implementation 'io.sentry:sentry-spring-boot-starter-jakarta:7.14.0'
+    // ⚠️ 이게 없으면 Sentry가 이벤트를 거의 받지 못한다.
+    // GlobalExceptionHandler가 모든 예외를 잡아 응답으로 바꾸므로, Sentry의 servlet 통합이
+    // 보는 "처리되지 않은 예외"가 존재하지 않는다. Logback appender를 붙여야
+    // 핸들러가 남기는 log.error(.., ex)가 이벤트가 된다.
+    // 덕분에 log.warn(예상 가능한 오류)과 log.error(진짜 문제)의 구분이 그대로 살아난다.
+    implementation 'io.sentry:sentry-logback:7.14.0'
     compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
 	runtimeOnly 'com.h2database:h2'
