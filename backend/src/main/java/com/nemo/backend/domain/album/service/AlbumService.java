@@ -18,6 +18,7 @@ import com.nemo.backend.domain.album.entity.AlbumFavorite;
 import com.nemo.backend.domain.album.repository.AlbumFavoriteRepository;
 import com.nemo.backend.domain.album.repository.AlbumRepository;
 import com.nemo.backend.domain.album.repository.AlbumShareRepository;
+import com.nemo.backend.domain.album.repository.AlbumListingRepository;
 import com.nemo.backend.domain.photo.entity.Photo;
 import com.nemo.backend.domain.photo.repository.PhotoRepository;
 import com.nemo.backend.domain.photo.service.PhotoStorage;
@@ -41,6 +42,7 @@ public class AlbumService {
     private final AlbumShareRepository albumShareRepository;
     private final PhotoRepository photoRepository;
     private final AlbumFavoriteRepository albumFavoriteRepository;
+    private final AlbumListingRepository albumListingRepository;
     private final PhotoStorage photoStorage;
 
     private final String publicBaseUrl;
@@ -53,6 +55,7 @@ public class AlbumService {
             AlbumShareRepository albumShareRepository,
             PhotoRepository photoRepository,
             AlbumFavoriteRepository albumFavoriteRepository,
+            AlbumListingRepository albumListingRepository,
             PhotoStorage photoStorage,
             @Value("${app.public-base-url:http://localhost:8080}") String publicBaseUrl
     ) {
@@ -60,6 +63,7 @@ public class AlbumService {
         this.albumShareRepository = albumShareRepository;
         this.photoRepository = photoRepository;
         this.albumFavoriteRepository = albumFavoriteRepository;
+        this.albumListingRepository = albumListingRepository;
         this.photoStorage = photoStorage;
         this.publicBaseUrl = publicBaseUrl.replaceAll("/+$", "");
     }
@@ -144,6 +148,81 @@ public class AlbumService {
         result.sort(Comparator.comparing(AlbumSummaryResponse::getCreatedAt).reversed());
 
         return result;
+    }
+
+    /**
+     * 앨범 목록 한 페이지. 정렬과 페이지 나누기를 DB에서 끝낸다.
+     *
+     * 예전에는 Controller가 전체 목록을 만든 뒤 메모리에서 정렬하고 subList()로 잘랐다.
+     * 1페이지만 보려 해도 사용자의 앨범 전부와 그 사진 정보를 메모리에 올렸다.
+     *
+     * 지금은 두 단계다.
+     *   1) DB에서 정렬·페이징까지 끝내고 이 페이지에 들어갈 앨범 id만 받는다
+     *   2) 그 id들에 대해서만 상세(장수·커버·공유여부)를 채운다
+     * 그래서 페이지 밖 앨범의 사진은 아예 읽지 않는다.
+     */
+    public AlbumPageResult getAlbumPage(Long userId,
+                                        String ownership,
+                                        boolean favoriteOnly,
+                                        String sortField,
+                                        boolean ascending,
+                                        int page,
+                                        int size) {
+
+        AlbumOwnershipFilter filter = AlbumOwnershipFilter.from(ownership);
+
+        long totalElements = albumListingRepository.countAlbums(userId, filter, favoriteOnly);
+        List<AlbumListingRow> pageRows = albumListingRepository.findAlbumPage(
+                userId, filter, favoriteOnly,
+                AlbumListingRepository.AlbumSortField.from(sortField),
+                ascending, page, size);
+
+        return new AlbumPageResult(toSummaries(userId, pageRows), totalElements);
+    }
+
+    /** 페이지에 들어갈 앨범들만 상세를 채운다. 쿼리 수는 앨범 수와 무관하게 고정이다. */
+    private List<AlbumSummaryResponse> toSummaries(Long userId, List<AlbumListingRow> rows) {
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> albumIds = rows.stream().map(AlbumListingRow::albumId).toList();
+
+        Map<Long, Album> albumsById = albumRepository.findAllById(albumIds).stream()
+                .collect(Collectors.toMap(Album::getId, a -> a));
+
+        Map<Long, List<AlbumPhotoRow>> photoRowsByAlbum = albumRepository.findAlivePhotoRows(albumIds)
+                .stream()
+                .collect(Collectors.groupingBy(AlbumPhotoRow::albumId));
+
+        Set<Long> sharedWithOthers =
+                new HashSet<>(albumShareRepository.findSharedAlbumIds(albumIds, Status.ACCEPTED));
+
+        List<AlbumSummaryResponse> result = new ArrayList<>(rows.size());
+        for (AlbumListingRow row : rows) {
+            Album album = albumsById.get(row.albumId());
+            if (album == null) {
+                continue; // 조회 도중 삭제된 앨범
+            }
+            List<AlbumPhotoRow> photoRows = photoRowsByAlbum.getOrDefault(row.albumId(), List.of());
+            boolean isOwner = "OWNER".equals(row.role());
+
+            result.add(AlbumSummaryResponse.builder()
+                    .albumId(album.getId())
+                    .title(album.getName())
+                    .coverPhotoUrl(resolveCoverUrl(album.getCoverPhotoUrl(), photoRows))
+                    .photoCount(photoRows.size())
+                    .createdAt(album.getCreatedAt())
+                    .role(row.role())
+                    // 소유 앨범은 "남과 공유 중인가", 공유받은 앨범은 정의상 항상 true
+                    .shared(isOwner ? sharedWithOthers.contains(album.getId()) : true)
+                    .build());
+        }
+        return result;
+    }
+
+    /** 목록 한 페이지와 전체 개수 */
+    public record AlbumPageResult(List<AlbumSummaryResponse> content, long totalElements) {
     }
 
     // favoriteOnly까지 포함

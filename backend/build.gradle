@@ -71,5 +71,20 @@ dependencies {
 }
 
 tasks.named('test') {
-	useJUnitPlatform()
+	useJUnitPlatform {
+		excludeTags 'performance'
+	}
+}
+
+tasks.register('performanceBaseline', Test) {
+	description = 'Runs PostgreSQL performance baseline tests.'
+	group = 'verification'
+	useJUnitPlatform {
+		includeTags 'performance'
+	}
+	testLogging {
+		events 'passed', 'failed'
+		showStandardStreams = true
+	}
+	shouldRunAfter tasks.named('test')
 }

@@ -1,0 +1,32 @@
+# Isolated local PostgreSQL profile for repeatable performance baselines.
+# Never point this profile at Supabase or another shared database.
+
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: ${BENCHMARK_DB_URL:jdbc:postgresql://localhost:55432/nemo_benchmark}
+    username: ${BENCHMARK_DB_USER:nemo_benchmark}
+    password: ${BENCHMARK_DB_PASSWORD:nemo_benchmark_local_only}
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate.format_sql: false
+      hibernate.generate_statistics: true
+
+app:
+  public-base-url: http://localhost:8080
+  jwt:
+    secret: benchmark-local-secret-key-32bytes-minimum
+    issuer: nemo-backend-benchmark
+    access-ttl-ms: 3600000
+  s3:
+    bucket: nemo-benchmark-unused
+    region: ap-northeast-2
+    endpoint: http://localhost:4566
+    accessKey: benchmark
+    secretKey: benchmark
+    pathStyle: true
+    createBucketIfMissing: false
