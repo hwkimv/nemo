@@ -18,6 +18,7 @@
 | 05 | [지도 API 캐시가 가리고 있던 것](case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 캐시가 가린 버그 발견 | `Verified` |
 | 06 | [지표를 붙이고 나서 알게 된 것](case-studies/06-monitoring.md) | 레이트 리미터가 동시 요청에 무력. 5회/초 의도 → 40회/초 | `Verified` |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](case-studies/07-ci-cd.md) | CI 관문 구축. 설정 누락·S3 기동 결합도 수정 | `Verified` |
+| 08 | [Sentry를 붙였는데 이벤트가 0건이었다](case-studies/08-sentry.md) | 중복 친구 요청 500 → 409. 토큰 스크러빙 검증 | `Verified` |
 
 ---
 
@@ -31,7 +32,8 @@
 | [2026-08-14 After 측정과 인덱스 판단](evidence/2026-08-14-after-and-index.md) | 같은 환경 Before/After, 실행 계획, 인덱스 비교 |
 | [2026-08-14 지도 API 캐시 측정](evidence/2026-08-14-map-cache.md) | 캐시 OFF/ON, 외부 호출 수, TTL 만료, 메모리 한계 |
 
-**재현 도구**는 `tools/performance/`에 있습니다 — k6 스크립트, 시드 SQL, 실행 계획 SQL, 인덱스 SQL, 네이버 API 스텁.
+**재현 도구**는 `tools/`에 있습니다 — k6 스크립트, 시드 SQL, 실행 계획 SQL, 인덱스 SQL,
+네이버 API 스텁(`tools/performance/`), Sentry 수집 스텁(`tools/observability/`).
 
 ---
 

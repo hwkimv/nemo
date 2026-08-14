@@ -63,9 +63,10 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           missing=0
-          for name in DB_URL DB_USER DB_PASSWORD JWT_SECRET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+          for name in DB_URL DB_USER DB_PASSWORD JWT_SECRET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY SENTRY_DSN; do
             # 값이 아니라 "설정됐는지" 여부만 본다
             if [ -z "$(printenv "$name")" ]; then
               echo "::error::GitHub Secrets 에 $name 이 없습니다"
@@ -108,6 +109,9 @@ jobs:
         run: |
           echo "이미지: ghcr.io/${{ github.repository }}/backend:${{ github.sha }}"
           echo "환경:   ${{ inputs.environment }}"
+          echo "SENTRY_RELEASE 로 쓸 값: ${{ github.sha }}"
+          echo "  → 배포 시 SENTRY_RELEASE=${{ github.sha }} 를 넘기면"
+          echo "     Sentry 이벤트와 배포된 커밋이 이어집니다."
           echo ""
           echo "실제 배포 단계는 아직 연결하지 않았습니다."
           echo "대상 플랫폼이 정해지면 이 잡 뒤에 배포 스텝을 추가합니다."

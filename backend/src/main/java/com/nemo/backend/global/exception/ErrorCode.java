@@ -74,6 +74,12 @@ public enum ErrorCode {
     ALBUM_SHARE_ALREADY_ACCEPTED(HttpStatus.BAD_REQUEST, "ALBUM_SHARE_ALREADY_ACCEPTED", "이미 수락된 초대입니다."),
 
 
+    // 친구 도메인 — 예상 가능한 상태·권한 오류
+    // 전에는 IllegalStateException 이라 최종 fallback 핸들러로 가서 500이 됐다.
+    // 중복 요청이나 남의 요청 수락은 정상적인 사용자 상황이지 서버 오류가 아니다.
+    FRIEND_REQUEST_ALREADY_EXISTS(HttpStatus.CONFLICT, "FRIEND_REQUEST_ALREADY_EXISTS", "이미 친구 요청을 보냈거나 친구 상태입니다."),
+    FRIEND_REQUEST_FORBIDDEN(HttpStatus.FORBIDDEN, "FRIEND_REQUEST_FORBIDDEN", "해당 친구 요청을 처리할 권한이 없습니다."),
+
     // 캘린더 타임라인 코드
     INVALID_QUERY(HttpStatus.BAD_REQUEST, "INVALID_QUERY", "year와 month 파라미터는 필수입니다.");
 

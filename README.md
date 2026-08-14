@@ -25,7 +25,8 @@
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
 | CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
-| 인증 경로 테스트 | 전체 **94개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 기타 15) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
+| Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
+| 인증 경로 테스트 | 전체 **101개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 스크러빙 7 + 기타 15) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 
 **측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
@@ -126,6 +127,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 05 | [지도 API 캐시가 가리고 있던 것](docs/case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 측정하다 캐시가 가린 버그 발견 |
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 돌려보며 드러난 결함 5건 |
+| 08 | [Sentry를 붙였는데 이벤트가 0건이었다](docs/case-studies/08-sentry.md) | 전역 핸들러가 삼키던 예외. 정상 상황이 500이던 문제 |
 
 전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
 
@@ -191,7 +193,7 @@ Grafana `http://localhost:3000` (admin / admin) → NEMO 폴더. 앱은 호스�
 cd backend && ./gradlew test
 ```
 
-**94 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**101 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 
@@ -217,4 +219,6 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **지도 API의 레이트 리미터가 동시 요청에 동작하지 않습니다.** 의도는 초당 5회인데 동시 8건이면 초당 40회가 나갑니다. 모니터링을 붙이며 발견했고 아직 고치지 않았습니다. ([CS 06](docs/case-studies/06-monitoring.md))
 - **Grafana 대시보드를 실제 화면으로 확인하지 못했습니다.** 작업 환경의 Docker가 불안정해 `promtool`로 설정·쿼리 문법만 검증했습니다.
 - **Flutter 정적 분석은 error만 파이프라인을 막습니다.** `info` 지적(`avoid_print` 등)이 많아 우선 error만 막고 점진적으로 줄입니다.
+- **실제 Sentry 서비스에 연결해보지 못했습니다.** 계정이 없어 수집 서버 스텁으로 payload를 검증했습니다. DSN을 넣으면 그대로 동작해야 합니다.
+- **다른 도메인에도 `IllegalStateException`이 남아 있을 수 있습니다.** 친구 도메인만 도메인 오류로 정리했습니다.
 - **배포 스텝이 없습니다.** `deploy.yml`은 배포 전 관문(테스트·secret 확인·이미지 push)까지만 있고, 실제 배포는 대상 플랫폼이 정해지면 붙입니다.
