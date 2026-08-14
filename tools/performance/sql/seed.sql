@@ -31,6 +31,7 @@ INSERT INTO users (
     social_id,
     plan_type,
     max_photo_count,
+    login_fail_count,
     created_at,
     updated_at
 )
@@ -46,6 +47,7 @@ SELECT
     NULL,
     'PLUS',
     5000,
+    0,
     timestamp '2025-01-01 00:00:00' + n * interval '1 minute',
     timestamp '2025-01-01 00:00:00' + n * interval '1 minute'
 FROM generate_series(1, 100) AS n;
