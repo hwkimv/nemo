@@ -162,6 +162,21 @@ NEMO 코드 프레임 (최근 순):
 
 **스택 트레이스가 원인 코드를 정확히 지목했습니다** — `FriendService line 51`.
 
+### 실제 Sentry 연결 확인
+
+스텁으로 payload를 검증한 뒤, 실제 DSN을 넣고 같은 경로를 다시 돌렸습니다.
+
+```
+INFO : Initializing SDK with DSN: 'https://...@o4511909740937216.ingest.us.sentry.io/...'
+DEBUG: Capturing event: 98598ec7b8f04b02937565369998a699
+DEBUG: Envelope sent successfully.
+DEBUG: Envelope flushed
+```
+
+외부 API가 죽은 상태로 지도를 조회해 **진짜 500을 만들었고**, 그 이벤트가 실제 Sentry로
+전송됐습니다. 스크러빙은 `beforeSend` 단계에서 일어나므로 전송 대상이 스텁이든 실제
+Sentry든 **같은 코드가 같은 결과를 만듭니다.**
+
 ### 스크러빙 검증 — 실제 전송된 payload
 
 요청에 일부러 토큰을 넣어 보냈습니다.
@@ -217,9 +232,9 @@ Sentry를 침묵시킨 것이 아니라 **소음만 걷어낸 것**입니다.
 
 ## Limit / Next Condition
 
-- **실제 Sentry 서비스에 연결해보지 못했습니다.** 계정이 없어 스텁으로 검증했습니다.
-  전송되는 payload는 동일하지만, Sentry UI의 그룹핑·알림 규칙은 확인하지 못했습니다.
-  DSN을 넣으면 그대로 동작해야 합니다.
+- **Sentry UI에서 저장된 이벤트를 직접 열어보지는 못했습니다.** 전송까지는 확인했습니다(아래).
+  온보딩에서 발급된 auth token이 `project:releases` 범위라 Event API 조회가 403이었습니다.
+  UI 확인이나 API 조회가 필요하면 `event:read` 범위 토큰을 따로 발급해야 합니다.
 - **알림 규칙이 없습니다.** 어떤 이벤트에 누구에게 알릴지는 정하지 않았습니다.
 - **`release` 값이 비어 있습니다.** CI에서 커밋 SHA를 주입하면 이벤트와 배포를 이을 수 있습니다.
 - **남은 `IllegalStateException`이 다른 도메인에도 있을 수 있습니다.**
