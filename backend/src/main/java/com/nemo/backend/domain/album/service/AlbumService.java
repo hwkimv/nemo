@@ -6,6 +6,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -65,49 +66,60 @@ public class AlbumService {
 
     // 1) 앨범 목록 조회 (ownership + favoriteOnly)
     // ownership: ALL / OWNED / SHARED
+    //
+    // ⚡ N+1 제거:
+    // 예전에는 앨범마다 (1) LAZY photos 컬렉션 접근 (2) 공유여부 exists 조회를 해서
+    // 앨범 100개 = SQL 202개였다. 지금은 앨범이 몇 개든 SQL 개수가 고정이다.
+    //   ① 소유 앨범 목록  ② 공유받은 앨범 목록(fetch join)
+    //   ③ 대상 앨범들의 살아있는 사진 행 일괄 조회  ④ 공유 중인 앨범 id 일괄 조회
     public List<AlbumSummaryResponse> getAlbums(Long userId, AlbumOwnershipFilter ownership) {
 
-        // 1) 내가 소유한 앨범들
-        List<AlbumSummaryResponse> owned = albumRepository.findByUserId(userId).stream()
-                .map(album -> {
-                    autoSetThumbnailIfMissing(album);
-                    int photoCount = (album.getPhotos() == null)
-                            ? 0
-                            : (int) album.getPhotos().stream()
-                            .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                            .count();
-                    // ✅ 이 앨범이 현재 다른 사용자와 공유 중인지 (ACCEPTED && active=true)
-                    boolean sharedFlag = albumShareRepository
-                            .existsByAlbumIdAndStatusAndActiveTrue(album.getId(), Status.ACCEPTED);
+        // ①② 목록에 필요한 앨범 엔티티를 먼저 모은다. (photos 컬렉션은 건드리지 않는다)
+        List<Album> ownedAlbums = albumRepository.findByUserId(userId);
+        List<AlbumShare> acceptedShares =
+                albumShareRepository.findAcceptedSharesWithAlbum(userId, Status.ACCEPTED);
 
+        Set<Long> albumIds = new LinkedHashSet<>();
+        ownedAlbums.forEach(a -> albumIds.add(a.getId()));
+        acceptedShares.forEach(s -> albumIds.add(s.getAlbum().getId()));
+
+        // ③ 앨범별 살아있는 사진 정보를 한 번에 (장수 계산 + 커버 선정에 모두 사용)
+        Map<Long, List<AlbumPhotoRow>> photoRowsByAlbum = albumIds.isEmpty()
+                ? Map.of()
+                : albumRepository.findAlivePhotoRows(albumIds).stream()
+                        .collect(Collectors.groupingBy(AlbumPhotoRow::albumId));
+
+        // ④ 소유 앨범 중 현재 남과 공유 중인 것들을 한 번에
+        Set<Long> sharedWithOthers = albumIds.isEmpty()
+                ? Set.of()
+                : new HashSet<>(albumShareRepository.findSharedAlbumIds(albumIds, Status.ACCEPTED));
+
+        // 1) 내가 소유한 앨범들
+        List<AlbumSummaryResponse> owned = ownedAlbums.stream()
+                .map(album -> {
+                    List<AlbumPhotoRow> rows = photoRowsByAlbum.getOrDefault(album.getId(), List.of());
                     return AlbumSummaryResponse.builder()
                             .albumId(album.getId())
                             .title(album.getName())
-                            .coverPhotoUrl(album.getCoverPhotoUrl())
-                            .photoCount(photoCount)
+                            .coverPhotoUrl(resolveCoverUrl(album.getCoverPhotoUrl(), rows))
+                            .photoCount(rows.size())
                             .createdAt(album.getCreatedAt())
                             .role("OWNER")
-                            .shared(sharedFlag)
+                            .shared(sharedWithOthers.contains(album.getId()))
                             .build();
                 })
                 .collect(Collectors.toList());
 
         // 2) 내가 공유받은 앨범들
-        List<AlbumSummaryResponse> shared = albumShareRepository
-                .findByUserIdAndStatusAndActiveTrue(userId, Status.ACCEPTED).stream()
+        List<AlbumSummaryResponse> shared = acceptedShares.stream()
                 .map(share -> {
                     Album album = share.getAlbum();
-                    autoSetThumbnailIfMissing(album);
-                    int photoCount = (album.getPhotos() == null)
-                            ? 0
-                            : (int) album.getPhotos().stream()
-                            .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                            .count();
+                    List<AlbumPhotoRow> rows = photoRowsByAlbum.getOrDefault(album.getId(), List.of());
                     return AlbumSummaryResponse.builder()
                             .albumId(album.getId())
                             .title(album.getName())
-                            .coverPhotoUrl(album.getCoverPhotoUrl())
-                            .photoCount(photoCount)
+                            .coverPhotoUrl(resolveCoverUrl(album.getCoverPhotoUrl(), rows))
+                            .photoCount(rows.size())
                             .createdAt(album.getCreatedAt())
                             .role(share.getRole().name())
                             // 공유받은 앨범 목록이므로 항상 true
@@ -602,6 +614,38 @@ public class AlbumService {
             return key;
         }
         return String.format("%s/files/%s", publicBaseUrl, key);
+    }
+
+    /**
+     * 목록 화면에 보여줄 커버 URL을 계산한다. (엔티티를 건드리지 않는 읽기 전용 버전)
+     *
+     * {@link #autoSetThumbnailIfMissing(Album)}과 결과 규칙은 같다.
+     *   1) 살아있는 사진이 없으면 커버도 없다
+     *   2) 저장된 커버가 아직 살아있는 사진을 가리키면 그대로 쓴다
+     *   3) 아니면 가장 최근 사진을 커버로 쓴다
+     *
+     * 차이는 "앨범 엔티티를 수정하지 않는다"는 점이다. 목록 조회는 읽기인데
+     * 기존 코드는 조회하면서 엔티티의 coverPhotoUrl을 바꾸고 있었다.
+     */
+    private String resolveCoverUrl(String storedCoverUrl, List<AlbumPhotoRow> alivePhotoRows) {
+        if (alivePhotoRows.isEmpty()) {
+            return null;
+        }
+
+        if (storedCoverUrl != null && !storedCoverUrl.isBlank()) {
+            boolean stillValid = alivePhotoRows.stream()
+                    .anyMatch(row -> storedCoverUrl.equals(row.displayUrl()));
+            if (stillValid) {
+                return storedCoverUrl;
+            }
+        }
+
+        return alivePhotoRows.stream()
+                .filter(row -> row.createdAt() != null)
+                .max(Comparator.comparing(AlbumPhotoRow::createdAt))
+                .or(() -> alivePhotoRows.stream().findFirst())
+                .map(AlbumPhotoRow::displayUrl)
+                .orElse(null);
     }
 
     /** 앨범의 coverPhotoUrl 자동 설정 로직 */
