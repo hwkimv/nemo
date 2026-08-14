@@ -80,7 +80,15 @@ public class S3PhotoStorage implements PhotoStorage {
                         "S3 버킷 생성 실패: " + ce.awsErrorDetails().errorMessage(), ce);
             }
         } catch (SdkClientException e) {
-            throw new ApiException(ErrorCode.STORAGE_FAILED, "S3 연결 실패: " + e.getMessage(), e);
+            // ⚠️ 여기서 예외를 던지면 애플리케이션이 아예 기동하지 않는다.
+            // 그러면 S3와 무관한 조회 API(앨범 목록·타임라인·지도)까지 함께 죽는다.
+            // 스토리지 장애의 영향 범위를 "파일을 다루는 요청"으로 좁히기 위해
+            // 기동은 계속하고, 실제 업로드·다운로드 시점에 STORAGE_FAILED로 실패시킨다.
+            //
+            // 잘못된 설정을 조용히 넘기지 않도록 경고는 크게 남긴다.
+            log.warn("[S3] 버킷 확인 실패 — 스토리지 없이 기동합니다. "
+                    + "파일 업로드·다운로드는 실패합니다. bucket={} endpoint 연결 오류: {}",
+                    bucket, e.getMessage());
         }
     }
 

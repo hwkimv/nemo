@@ -1,0 +1,113 @@
+# NEMO 배포 (수동 실행)
+#
+# 아직 상시 공개 인스턴스가 없어 자동 배포는 켜두지 않았다.
+# 대신 **배포 전에 반드시 통과해야 하는 관문**을 코드로 고정해 둔다.
+#
+# 이 워크플로가 하는 일
+#   1) 테스트 → 빌드 → 이미지 빌드를 다시 확인한다 (CI 재사용)
+#   2) 배포에 필요한 secret 이 실제로 설정돼 있는지 확인한다
+#   3) 이미지를 GitHub Container Registry 에 push 한다
+#
+# 실제 배포(Railway 등) 단계는 대상이 정해지면 마지막에 연결한다.
+# 지금 없는 단계를 있는 것처럼 적어두지 않는다.
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 배포 대상
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false # 배포는 중간에 끊지 않는다
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # 배포 전 관문: 테스트가 통과하지 않으면 여기서 멈춘다
+  verify:
+    name: 배포 전 검증
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 21 설치
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle 캐시 설정
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 테스트
+        working-directory: backend
+        run: ./gradlew test --no-daemon
+
+      # 비밀값은 저장소에 없다. 배포 직전에 존재 여부만 확인한다.
+      # 값은 절대 출력하지 않는다. (CS 03 에서 토큰 로그를 지운 것과 같은 기준)
+      - name: 필수 secret 설정 확인
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=0
+          for name in DB_URL DB_USER DB_PASSWORD JWT_SECRET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            # 값이 아니라 "설정됐는지" 여부만 본다
+            if [ -z "$(printenv "$name")" ]; then
+              echo "::error::GitHub Secrets 에 $name 이 없습니다"
+              missing=1
+            else
+              echo "  ok  $name"
+            fi
+          done
+          exit $missing
+
+  push-image:
+    name: 이미지 push
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: GHCR 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 이미지 빌드 & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/backend:${{ inputs.environment }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 배포 대상 안내
+        run: |
+          echo "이미지: ghcr.io/${{ github.repository }}/backend:${{ github.sha }}"
+          echo "환경:   ${{ inputs.environment }}"
+          echo ""
+          echo "실제 배포 단계는 아직 연결하지 않았습니다."
+          echo "대상 플랫폼이 정해지면 이 잡 뒤에 배포 스텝을 추가합니다."

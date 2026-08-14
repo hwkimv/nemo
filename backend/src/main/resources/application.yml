@@ -63,6 +63,21 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    # ⚠️ mail health indicator를 끈다.
+    #
+    # 켜져 있으면 /actuator/health 를 부를 때마다 SMTP 서버(smtp.gmail.com)에
+    # 실제로 접속을 시도한다. 두 가지가 문제다.
+    #   1) health check는 보통 수 초 간격으로 계속 호출된다.
+    #      그때마다 외부 SMTP에 접속하면 느리고, 메일 제공자가 차단할 수도 있다.
+    #   2) 메일이 죽으면 전체 health가 DOWN이 된다. 그러면 오케스트레이터가
+    #      "조회 API는 멀쩡히 서비스 중인" 인스턴스를 죽은 것으로 보고 재시작한다.
+    #
+    # 메일은 이메일 인증·비밀번호 재설정에 쓰는 보조 기능이다.
+    # 그 가용성이 서비스 전체의 생존 여부를 결정해서는 안 된다.
+    # 메일 장애는 해당 기능의 실패로 드러나야 한다.
+    mail:
+      enabled: false
   prometheus:
     metrics:
       export:
