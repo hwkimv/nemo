@@ -44,6 +44,9 @@ public final class PublicEndpoints {
             "/api/auth/password/**",
             "/api/users/password/**",
 
+            // Cloudflare Turnstile 캡챠 검증 (로그인 전에 호출되므로 토큰이 없다)
+            "/api/auth/turnstile",
+
             // 토큰 재발급 / 개발용 시드
             "/api/auth/refresh",
             "/api/auth/dev/**"

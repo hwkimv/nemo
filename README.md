@@ -1,75 +1,96 @@
 # 네컷모아 (NEMO)
 
-네컷사진을 앨범으로 정리하고 공유하는 Flutter·Spring Boot 기반 서비스입니다.
+셀프 포토부스 사진을 QR 또는 직접 업로드로 모아 클라우드에 보관하고, 날짜·브랜드·장소·친구 기준으로 정리해 캘린더 회고와 공유 앨범을 제공하는 앱입니다.
 
-## 프로젝트 구성
+## WHY
 
-- `frontend/`: Flutter 클라이언트
-- `backend/`: Spring Boot API 서버
-- `docs/`: 기획, 설계, 구현 계획, 검증 기록
+포토부스는 브랜드마다 사진 다운로드 방식과 보관 위치가 제각각입니다. 카카오톡으로 받은 것, 브랜드 앱에 남은 것, 갤러리에 저장한 것이 흩어지고, 시간이 지나면 "언제 누구와 어디서 찍었는지"라는 맥락이 먼저 사라집니다.
+
+네컷모아는 **사진 파일과 촬영 맥락을 함께 저장**해서, 나중에 다시 찾고 회고할 수 있게 만듭니다.
+
+## WHAT
+
+| 기능 | 설명 |
+|---|---|
+| QR 가져오기 | 포토부스 QR을 스캔해 원본을 내려받고 중복을 걸러 저장 |
+| 직접 업로드 | 갤러리 파일 업로드. EXIF에서 촬영일 추출 |
+| 자동·수동 분류 | 날짜 · 브랜드 · 장소 · 함께 찍은 친구 · 해시태그 |
+| 캘린더 회고 | 월별 캘린더와 타임라인에서 과거 사진 탐색 |
+| 공유 앨범 | 공유 링크 또는 친구 초대로 공동 앨범 구성 |
+| 지도 | 사진을 찍은 포토부스 위치 확인 |
+
+## HOW
+
+```text
+Flutter 앱
+  │  http + JWT
+  ▼ HTTPS
+Spring Boot API
+  ├─ auth    인증·토큰 발급/검증, 이메일 인증, 비밀번호 재설정
+  ├─ user    프로필, 계정 상태
+  ├─ photo   업로드, QR 가져오기, 태그, 즐겨찾기
+  ├─ album   앨범, 공유 링크, 참여자 권한
+  ├─ friend  친구 관계
+  ├─ timeline 캘린더·타임라인 조회 모델
+  ├─ map     포토부스 위치 검색
+  └─ storage 파일 저장 추상화
+        │
+        ├─ PostgreSQL (Supabase) — 사용자·사진 메타데이터·관계
+        └─ S3 / LocalStack       — 원본·압축본·썸네일
+```
+
+큰 바이너리는 오브젝트 스토리지에, 검색·정렬에 필요한 메타데이터는 RDB에 두고 DB에는 객체 키만 저장합니다. 졸업작품 규모에서 마이크로서비스 분리는 하지 않았습니다 — 운영과 설명이 모두 어려워지기 때문입니다.
 
 ## 기술 스택
 
-- Client: Flutter, Dart, Provider
-- Server: Java 21, Spring Boot, Spring Security/JWT, Spring Data JPA
-- Data/Infra: PostgreSQL 17.6 (Supabase), AWS S3, Docker
+**Backend** — Java 21 · Spring Boot 3.5.3 · Spring Security + JWT(jjwt) · Spring Data JPA · springdoc-openapi · Actuator · AWS SDK v2 (S3) · ZXing(QR) · Jsoup
 
-## 실행 프로필
+**Frontend** — Flutter (Dart SDK 3.8+) · provider · http · flutter_naver_map · mobile_scanner(QR) · image_picker · geolocator
 
-| 프로필 | 목적 | 데이터베이스 | 주요 특성 |
-|---|---|---|---|
-| `dev` | 기본 개발·테스트 | H2 인메모리 | H2 콘솔과 Swagger 사용 가능 |
-| `local` | 로컬 PostgreSQL 연동 | 환경변수 `DB_URL` | JWT·S3 값도 환경변수로 주입 |
-| `prod` | 운영 조건 검증 | PostgreSQL | 스키마 검증, H2·Swagger 비활성화 |
+**Data / Infra** — PostgreSQL(Supabase, 운영) · H2(개발) · MariaDB(레거시) · LocalStack · Docker · Nginx
 
-기본 프로필은 `dev`입니다. 운영 프로필은 DB, JWT, 공개 URL, S3 관련 환경변수가 필요하며 실제 비밀값은 저장소에 커밋하지 않습니다.
-
-## 실행 방법
+## 실행
 
 ### Backend
 
-```powershell
-cd backend
-.\gradlew.bat bootRun
+```bash
+cd backend && ./gradlew bootRun
 ```
 
-운영 조건에서는 필요한 환경변수를 주입한 뒤 프로필을 명시합니다.
+기본 프로필은 `dev`입니다. 환경변수 없이 H2 인메모리로 뜹니다. Swagger는 `http://localhost:8080/swagger-ui/index.html`.
 
-```powershell
-$env:SPRING_PROFILES_ACTIVE = "prod"
-.\gradlew.bat bootRun
+운영 프로필은 환경변수를 요구합니다 — `SPRING_PROFILES_ACTIVE=prod`, `DB_URL` / `DB_USER` / `DB_PASSWORD`, `JWT_SECRET`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. 저장소에는 비밀값을 커밋하지 않습니다.
+
+### Frontend
+
+```bash
+cd frontend && flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080
 ```
 
-### Flutter
+Mock API는 `--dart-define=USE_MOCK_API=true`일 때만 켜집니다.
 
-Android 에뮬레이터에서 로컬 Backend를 사용할 때:
+### 빌드 주의
 
-```powershell
-cd frontend
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080
-```
+Gradle toolchain이 **Java 21**을 요구합니다. JDK 23 환경에서는 빌드가 깨집니다.
 
-Mock API가 필요한 테스트·시연 환경에서는 명시적으로 활성화합니다.
+## 문서
 
-```powershell
-flutter run --dart-define=USE_MOCK_API=true
-```
+- [문서 허브](docs/project/README.md) — 문서 상태 규칙(`Draft` / `Verified` / `Historical`)
+- [Case Study: Supabase PostgreSQL 전환 후 런타임 하드닝](docs/project/case-studies/2026-08-02-supabase-postgresql-runtime-hardening.md) — `Verified`
+- [설계·구현 계획](docs/superpowers/)
 
-실기기는 `API_BASE_URL`에 개발 PC의 LAN IP를 사용해야 합니다. 평문 HTTP 허용은 Android debug 빌드에만 적용했으며 배포 환경은 HTTPS를 전제로 합니다.
+## 팀
 
-## 검증
+3인 졸업작품 (KDU 캡스톤)
 
-```powershell
-cd backend
-.\gradlew.bat clean test --no-daemon
+| 이름 | 역할 |
+|---|---|
+| 김한욱 | 팀장 · 풀스택 |
+| 문한일 | 백엔드 |
+| 임다빈 | 프론트엔드 |
 
-cd ..\frontend
-flutter test
-flutter analyze
-```
+기여자 목록은 `.mailmap`으로 정규화되어 있습니다 — `git shortlog -sne --all`.
 
-최신 검증 결과와 남은 제한사항은 [프로젝트 문서 인덱스](docs/project/README.md)와 [Supabase PostgreSQL 런타임 하드닝 사례](docs/project/case-studies/2026-08-02-supabase-postgresql-runtime-hardening.md)에 기록합니다.
+## 브랜치
 
-## 역할과 기여 범위
-
-포트폴리오에는 `PM + 백엔드 공동 담당`으로 표기합니다. 본인의 확인 가능한 기여는 요구사항·일정 조율, 인증·QR·앨범·사진·공유·스토리지 API, DB 전환 후 런타임 안정화와 검증 문서화입니다. 팀 전체 결과와 개인 구현을 구분해 설명합니다.
+`dev`가 통합 브랜치입니다. 기능 작업은 `feature/*`에서 시작해 `dev`로 PR을 보내고, 릴리스 시점에 `dev` → `main`으로 병합합니다.

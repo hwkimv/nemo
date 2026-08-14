@@ -23,6 +23,7 @@ import com.nemo.backend.domain.friend.repository.FriendRepository;
 import com.nemo.backend.domain.photo.entity.Photo;
 import com.nemo.backend.domain.photo.repository.PhotoRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -35,6 +36,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -54,6 +56,16 @@ public class AuthService {
     private final AlbumFavoriteRepository albumFavoriteRepository;
     private final FriendRepository friendRepository;
     private final PhotoRepository photoRepository;
+
+    // 캡챠 검증용 서비스
+    private final TurnstileService turnstileService;
+
+    // 🔐 로그인 실패 정책
+    // - 2번까지는 그냥 실패
+    // - 3번째 시도부터는 캡챠 요구
+    // - 5번 연속 실패 시 계정 잠금(비밀번호 재설정 필요)
+    private static final int LOGIN_CAPTCHA_THRESHOLD = 2; // 2번 틀린 뒤부터 캡챠
+    private static final int LOGIN_MAX_FAIL_COUNT = 5;    // 총 5번 틀리면 잠금
 
     @Value("${jwt.access-exp-seconds:3600}")
     private long accessExpSeconds;
@@ -110,26 +122,104 @@ public class AuthService {
     }
 
     // =======================
-    // 2) 로그인
+    // 2) 로그인 (시도 횟수 / 계정 잠금 / Turnstile 캡챠 반영)
     // =======================
+    /**
+     * 이메일/비밀번호 로그인.
+     *
+     * 정책:
+     * - 비밀번호 2번까지: 그냥 INVALID_CREDENTIALS
+     * - 3~4번째: 캡챠(Turnstile)를 요구
+     *   → 프론트는 NEED_CAPTCHA 에러를 받으면 Turnstile 위젯을 띄우고,
+     *      발급받은 captchaToken을 포함해 다시 로그인 요청
+     * - 5번째 이상: 계정 잠금 → ACCOUNT_LOCKED 반환, 비밀번호 재설정 필요
+     *
+     * 계정 잠금은 User.loginFailCount & lockedUntil 로 관리하며,
+     * 비밀번호 재설정 성공 시 User.resetLoginFail()로 해제한다.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
     public LoginResponse login(LoginRequest request) {
 
+        // 0) 기본 파라미터 검증
         if (request == null
                 || request.getEmail() == null || request.getEmail().isBlank()
                 || request.getPassword() == null || request.getPassword().isBlank()) {
             throw new ApiException(ErrorCode.INVALID_REQUEST);
         }
 
-        User user = userRepository.findByEmail(request.getEmail().trim())
+        String email = request.getEmail().trim();
+
+        // 1) 사용자 조회
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ApiException(ErrorCode.INVALID_CREDENTIALS));
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new ApiException(ErrorCode.INVALID_CREDENTIALS);
+        // (선택) 소셜 계정은 여기서 막고, 소셜 로그인 전용 API로만 로그인하게 할 수도 있음
+        // if (!"local".equalsIgnoreCase(user.getProvider())) {
+        //     throw new ApiException(ErrorCode.INVALID_CREDENTIALS);
+        // }
+
+        // 2) 계정 잠금 여부 먼저 확인
+        if (user.isLocked()) {
+            // 이미 잠겨 있는 계정 → 바로 에러
+            throw new ApiException(ErrorCode.ACCOUNT_LOCKED);
         }
 
-        // 로컬 로그인은 항상 isNewUser = false
+        int failCount = user.getLoginFailCount();
+        boolean needCaptcha = failCount >= LOGIN_CAPTCHA_THRESHOLD;
+
+        // 3) Turnstile 캡챠가 필요한 상태인지 체크
+        if (needCaptcha) {
+            // 3-1) 토큰이 안 왔으면 → "캡챠 먼저 통과해"라는 신호만 보냄
+            String captchaToken = request.getCaptchaToken();
+            if (captchaToken == null || captchaToken.isBlank()) {
+                throw new ApiException(ErrorCode.NEED_CAPTCHA);
+            }
+
+            // 3-2) 토큰이 왔으면 실제 Turnstile 검증
+            //      - 실패 시 TurnstileService가 ApiException(INVALID_CAPTCHA 등)을 던진다.
+            turnstileService.verifyToken(captchaToken, null);
+        }
+
+        // 4) 비밀번호 검증
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            // ⬇️ 실패 시 처리: 실패 횟수 +1, 필요 시 계정 잠금
+            handleLoginFail(user);
+            throw new ApiException(
+                    user.isLocked() ? ErrorCode.ACCOUNT_LOCKED : ErrorCode.INVALID_CREDENTIALS
+            );
+        }
+
+        // 5) 여기까지 왔으면 로그인 성공 → 실패 기록 초기화
+        user.resetLoginFail();
+        userRepository.save(user);
+
+        // 6) 토큰 발급
+        //    dev에서 응답 조립이 createLoginResponse로 모였다. 직접 LoginResponse를
+        //    만들면 그 사이 추가된 provider 필드가 빠지므로 헬퍼를 쓴다.
+        //    로컬 로그인은 항상 isNewUser = false.
         return createLoginResponse(user, false);
     }
+
+    /**
+     * 로그인 실패 시 호출되는 내부 메서드.
+     * - 실패 횟수 1 증가
+     * - 실패 횟수가 최대치를 넘으면 lockedUntil 설정
+     */
+    private void handleLoginFail(User user) {
+        int before = user.getLoginFailCount();
+        user.increaseLoginFail(); // loginFailCount++, lastLoginFailedAt 갱신
+        log.info("[LOGIN-FAIL] {}: {} -> {}", user.getEmail(), before, user.getLoginFailCount());
+
+        if (user.getLoginFailCount() >= LOGIN_MAX_FAIL_COUNT) {
+            // 정책: 5회 이상 틀리면 계정 잠금.
+            // lockedUntil을 "사실상 영구 잠금"처럼 길게 잡고,
+            // 비밀번호 재설정 성공 시 resetLoginFail()로 해제.
+            user.lockUntil(LocalDateTime.now().plusYears(100));
+        }
+
+        userRepository.save(user);
+    }
+
 
     // =======================
     // 3) 로그아웃 (명세 반영)
