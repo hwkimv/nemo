@@ -51,6 +51,34 @@ turnstile:
   enabled: ${TURNSTILE_ENABLED:false}
 
 # =============================
+# Actuator / 지표
+# =============================
+# health·info·prometheus만 연다. env·beans·heapdump 같은 나머지는 닫아 둔다.
+# 운영에서 /actuator/prometheus를 공개하지 않는 방법은 application-prod.yml 참고.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    tags:
+      application: nemo-backend
+    # HTTP 요청 지표에 백분위 계산용 히스토그램을 켠다.
+    # 이게 없으면 Prometheus에서 p95를 구할 수 없다(histogram_quantile에 쓸 버킷이 없다).
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 50ms, 100ms, 200ms, 500ms, 1s, 2s, 5s
+
+# =============================
 # 로깅
 # =============================
 logging:

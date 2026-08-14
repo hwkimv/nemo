@@ -1,0 +1,14 @@
+# 대시보드도 파일에서 자동 로딩한다.
+# UI에서 만든 대시보드는 컨테이너를 지우면 사라지므로 JSON으로 저장소에 둔다.
+apiVersion: 1
+
+providers:
+  - name: nemo
+    orgId: 1
+    folder: NEMO
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
