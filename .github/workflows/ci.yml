@@ -1,0 +1,226 @@
+# NEMO CI
+#
+# 이 파이프라인의 목적은 자동 배포가 아니라
+# **테스트를 통과하지 않은 코드가 다음 단계로 넘어가지 못하게 막는 것**이다.
+#
+# 흐름
+#   backend-test ──┬─> backend-build ──> docker-image
+#                  └─> (실패하면 아래 단계는 아예 실행되지 않는다)
+#   compose-config, frontend 는 독립적으로 병렬 실행
+#
+# backend/Dockerfile 은 `bootJar -x test` 로 이미지를 만든다.
+# 이미지 안에서 테스트를 돌리지 않는 대신, CI가 이미지 빌드 **전에** 테스트 통과를 보장한다.
+
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+# 같은 브랜치에 새 커밋이 오면 진행 중인 실행을 취소한다 (러너 시간 절약)
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # 1) 백엔드 테스트 — 이 잡이 실패하면 빌드도 이미지도 만들지 않는다
+  # ────────────────────────────────────────────────────────────
+  backend-test:
+    name: Backend 테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gradle toolchain 이 Java 21 을 요구한다. JDK 23 에서는 빌드가 깨진다.
+      - name: JDK 21 설치
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle 캐시 설정
+        uses: gradle/actions/setup-gradle@v4
+
+      # dev 프로필(H2 인메모리)로 돈다. 외부 비밀값이 필요 없다.
+      # 외부 의존성이 필요한 테스트는 @MockitoBean 으로 대체돼 있다.
+      - name: 테스트 실행
+        working-directory: backend
+        run: ./gradlew test --no-daemon
+
+      # 실패했을 때 원인을 보려면 리포트가 필요하다. 성공해도 남겨 둔다.
+      - name: 테스트 리포트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-report
+          path: backend/build/reports/tests/test
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────
+  # 2) 백엔드 빌드 — 테스트 통과 후에만
+  # ────────────────────────────────────────────────────────────
+  backend-build:
+    name: Backend 빌드
+    runs-on: ubuntu-latest
+    needs: backend-test
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 21 설치
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle 캐시 설정
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 실행 가능한 JAR 빌드
+        working-directory: backend
+        run: ./gradlew bootJar --no-daemon
+
+      - name: JAR 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jar
+          path: backend/build/libs/*.jar
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────
+  # 3) Docker 이미지 빌드 — 테스트와 빌드를 모두 통과한 뒤에만
+  #    push 하지 않는다. Dockerfile 이 실제로 동작하는지만 확인한다.
+  # ────────────────────────────────────────────────────────────
+  docker-image:
+    name: Docker 이미지 빌드
+    runs-on: ubuntu-latest
+    needs: [backend-test, backend-build]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 이미지 빌드 (push 안 함)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: nemo-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 이미지가 만들어졌다고 뜨는 것은 아니다. 실제로 기동되는지 본다.
+      # prod 프로필은 DB 등 환경변수를 요구하므로 dev 로 띄워 health 만 확인한다.
+      - name: 컨테이너 기동 확인
+        run: |
+          docker run -d --name nemo-ci \
+            -e SPRING_PROFILES_ACTIVE=dev \
+            -e APP_S3_CREATEBUCKETIFMISSING=false \
+            -e NAVER_LOCAL_CLIENT_ID=ci -e NAVER_LOCAL_CLIENT_SECRET=ci \
+            -e NAVER_MAP_CLIENT_ID=ci -e NAVER_MAP_CLIENT_SECRET=ci \
+            -p 8080:8080 nemo-backend:ci
+
+          for _ in $(seq 1 30); do
+            sleep 5
+            if curl -sf http://localhost:8080/actuator/health > /dev/null; then
+              echo "기동 확인"
+              exit 0
+            fi
+          done
+
+          echo "::error::컨테이너가 기동되지 않았습니다"
+          docker logs nemo-ci | tail -50
+          exit 1
+
+      - name: 컨테이너 정리
+        if: always()
+        run: docker rm -f nemo-ci || true
+
+  # ────────────────────────────────────────────────────────────
+  # 4) compose 설정 검증
+  #    프로필이 존재하지 않는 파일을 mount 하고 있어도 배포 전까지 모른다.
+  #    실제로 nemo.prod.conf 가 없는 채로 오래 방치돼 있었다.
+  # ────────────────────────────────────────────────────────────
+  compose-config:
+    name: compose 설정 검증
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 프로필별 config 파싱
+        run: |
+          for profile in dev prod s3 benchmark monitoring; do
+            echo "── profile: $profile ──"
+            docker compose --profile "$profile" config > /dev/null
+          done
+
+      # config 는 파일이 없어도 통과한다. mount 대상이 실제로 있는지 따로 본다.
+      # 실제로 infra/nginx/nemo.prod.conf 가 없는 채로 오래 방치돼 있었고,
+      # `docker compose config` 만으로는 그것을 잡지 못했다.
+      #
+      # 빌드 산출물(frontend/build/web 등)은 체크아웃 직후 없는 것이 정상이므로 제외한다.
+      # 여기서 잡고 싶은 것은 "저장소에 있어야 하는데 없는 설정 파일"이다.
+      - name: mount 대상 파일 존재 확인
+        run: |
+          docker compose --profile dev --profile prod --profile s3 \
+                         --profile benchmark --profile monitoring config \
+            | grep -E '^[[:space:]]+source: /' | awk '{print $2}' | sort -u > /tmp/sources.txt
+
+          missing=0
+          while read -r path; do
+            [ -z "$path" ] && continue
+
+            case "$path" in
+              */frontend/build/*)
+                echo "  skip    $path (빌드 산출물)"
+                continue
+                ;;
+            esac
+
+            if [ -e "$path" ]; then
+              echo "  ok      $path"
+            else
+              echo "::error::compose 가 참조하는 설정 경로가 없습니다: $path"
+              missing=1
+            fi
+          done < /tmp/sources.txt
+
+          exit $missing
+
+  # ────────────────────────────────────────────────────────────
+  # 5) Flutter 정적 분석 + 테스트
+  # ────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend 분석·테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: 의존성 설치
+        working-directory: frontend
+        run: flutter pub get
+
+      # analyze 는 경고가 많을 수 있어 우선 오류만 파이프라인을 막는다.
+      # 경고까지 막으려면 --fatal-warnings 를 붙인다.
+      - name: 정적 분석
+        working-directory: frontend
+        run: flutter analyze --no-fatal-warnings
+
+      - name: 테스트 실행
+        working-directory: frontend
+        run: flutter test

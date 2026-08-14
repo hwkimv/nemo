@@ -17,6 +17,7 @@
 | 04 | [앨범 목록 N+1 제거와 측정](case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** | `Verified` |
 | 05 | [지도 API 캐시가 가리고 있던 것](case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 캐시가 가린 버그 발견 | `Verified` |
 | 06 | [지표를 붙이고 나서 알게 된 것](case-studies/06-monitoring.md) | 레이트 리미터가 동시 요청에 무력. 5회/초 의도 → 40회/초 | `Verified` |
+| 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](case-studies/07-ci-cd.md) | CI 관문 구축. 설정 누락·S3 기동 결합도 수정 | `Verified` |
 
 ---
 

@@ -24,7 +24,8 @@
 | 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
-| 인증 경로 테스트 | 전체 **92개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 기존 13) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
+| CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. 설정 누락 2건 수정 | [CS 07](docs/case-studies/07-ci-cd.md) |
+| 인증 경로 테스트 | 전체 **94개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 기타 15) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 
 **측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
@@ -124,6 +125,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 04 | [앨범 목록 N+1 제거와 측정](docs/case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** |
 | 05 | [지도 API 캐시가 가리고 있던 것](docs/case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 측정하다 캐시가 가린 버그 발견 |
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
+| 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 짜다가 발견한 결함 2건 |
 
 전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
 
@@ -163,6 +165,18 @@ cd frontend && flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080
 
 Mock API는 `--dart-define=USE_MOCK_API=true`일 때만 켜집니다.
 
+### CI
+
+`main`·`dev` push와 모든 PR에서 자동 실행됩니다.
+
+```
+backend-test ──> backend-build ──> docker-image
+```
+
+테스트가 실패하면 빌드도 이미지도 만들지 않습니다. `.github/workflows/ci.yml`
+
+> 관문이 실제로 강제되려면 저장소 설정에서 브랜치 보호 규칙에 `backend-test`를 필수로 지정해야 합니다.
+
 ### 모니터링
 
 ```bash
@@ -177,7 +191,7 @@ Grafana `http://localhost:3000` (admin / admin) → NEMO 폴더. 앱은 호스�
 cd backend && ./gradlew test
 ```
 
-**92 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**94 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 
@@ -200,6 +214,7 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **사진 업로드·QR·친구 경로에는 아직 테스트가 없습니다.** 인증·앨범·타임라인 경로만 덮여 있습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
-- **S3에 연결되지 않으면 앱이 기동하지 않습니다.** 읽기 전용 API만 쓰는 경우에도 그렇습니다. 성능 측정 중 발견했고 아직 고치지 않았습니다.
 - **지도 API의 레이트 리미터가 동시 요청에 동작하지 않습니다.** 의도는 초당 5회인데 동시 8건이면 초당 40회가 나갑니다. 모니터링을 붙이며 발견했고 아직 고치지 않았습니다. ([CS 06](docs/case-studies/06-monitoring.md))
 - **Grafana 대시보드를 실제 화면으로 확인하지 못했습니다.** 작업 환경의 Docker가 불안정해 `promtool`로 설정·쿼리 문법만 검증했습니다.
+- **CI 워크플로를 GitHub에서 실행해보지 못했습니다.** `actionlint`로 문법·액션 사용만 검증했습니다. 첫 PR 실행 결과를 보고 조정이 필요합니다.
+- **배포 스텝이 없습니다.** `deploy.yml`은 배포 전 관문(테스트·secret 확인·이미지 push)까지만 있고, 실제 배포는 대상 플랫폼이 정해지면 붙입니다.
