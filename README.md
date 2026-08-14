@@ -22,7 +22,8 @@
 | 타임라인 조회를 DB 기간 쿼리로 | 응답 **8.3ms → 4.4ms**, 읽는 행 1,000 → 93 | [CS 04](docs/case-studies/04-query-performance.md) |
 | 앨범 목록 DB 페이지네이션 | 앨범 5,000개에서 **74ms → 8ms**, 앨범 수와 무관하게 고정 | [CS 04](docs/case-studies/04-query-performance.md) |
 | 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
-| 인증 경로 테스트 | 전체 **86개** (인증 37 + 보안 17 + 조회 20 + 기존) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
+| 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
+| 인증 경로 테스트 | 전체 **91개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 기존 12) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 
 **측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
@@ -120,6 +121,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 02 | [Supabase PostgreSQL 전환 후 런타임 하드닝](docs/case-studies/02-postgres-runtime-hardening.md) | 프로필 분리, 운영 smoke test, 개발용 표면 차단 |
 | 03 | [인증·권한 경계의 구멍 4개 막기](docs/case-studies/03-security-boundaries.md) | 타인 사진 접근 차단, 토큰 로그 제거. 회귀 테스트 17개 |
 | 04 | [앨범 목록 N+1 제거와 측정](docs/case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** |
+| 05 | [지도 API 캐시가 가리고 있던 것](docs/case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 측정하다 캐시가 가린 버그 발견 |
 
 전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
 
@@ -165,7 +167,7 @@ Mock API는 `--dart-define=USE_MOCK_API=true`일 때만 켜집니다.
 cd backend && ./gradlew test
 ```
 
-**86 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**91 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 
@@ -183,7 +185,8 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **조회 성능만 측정했습니다.** 앨범·타임라인·사진 조회는 Before/After가 있지만, 업로드·QR 경로는 측정하지 않았습니다.
 - **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
 - **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
-- **캐시 효과를 측정하지 않았습니다.** 지도 API에 `ConcurrentHashMap` + TTL 2분 로컬 캐시가 있지만 적용 전후 외부 호출 수·응답시간을 비교하지 않았습니다. (Caffeine이나 Redis가 아닙니다)
+- **지도 뷰포트 1회 요청이 외부 API를 41번 부릅니다.** 캐시가 반복은 막아주지만 첫 요청은 여전히 7초입니다. 호출 수 자체를 줄이는 것이 다음 과제입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
+- **지도 캐시에 크기 상한이 없습니다.** Reverse Geocode 키가 좌표 그 자체라 지도를 움직이는 만큼 항목이 늘어납니다. (이 캐시는 `ConcurrentHashMap` + TTL 2분이며 Caffeine이나 Redis가 아닙니다)
 - **사진 업로드·QR·친구 경로에는 아직 테스트가 없습니다.** 인증·앨범·타임라인 경로만 덮여 있습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.

@@ -59,7 +59,15 @@ public class NaverApiClient {
     //     - Local Search / Reverse Geocode 둘 다 공통으로 사용
     //     - key: 완성된 URI 문자열, value: 캐시 항목(응답+저장시각)
     // ───────────────────────────────────────────────────────────────
-    private static final long CACHE_TTL_MILLIS = Duration.ofMinutes(2).toMillis();
+    /**
+     * 캐시 유효시간(초). 기본 2분.
+     *
+     * 0으로 두면 캐시를 끈다. 캐시 효과를 측정할 때 같은 빌드로 ON/OFF를 비교하기 위해,
+     * 그리고 외부 응답이 이상할 때 운영에서 즉시 우회하기 위해 설정으로 뺐다.
+     */
+    @Value("${naver.cache.ttl-seconds:120}")
+    private long cacheTtlSeconds = Duration.ofMinutes(2).toSeconds();
+
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     private record CacheEntry(Map<String, Object> body, long savedAtMs) {}
@@ -283,16 +291,28 @@ public class NaverApiClient {
     }
 
     private Map<String, Object> loadFromCache(String key) {
+        if (cacheTtlSeconds <= 0) return null; // 캐시 비활성
         CacheEntry entry = cache.get(key);
         if (entry == null) return null;
         long age = System.currentTimeMillis() - entry.savedAtMs();
-        if (age <= CACHE_TTL_MILLIS) return entry.body();
+        if (age <= cacheTtlSeconds * 1000L) return entry.body();
         cache.remove(key); // 만료되면 정리
         return null;
     }
 
     private void saveToCache(String key, Map<String, Object> body) {
+        if (cacheTtlSeconds <= 0) return; // 캐시 비활성
         cache.put(key, new CacheEntry(Objects.requireNonNullElse(body, Map.of()), System.currentTimeMillis()));
+    }
+
+    /** 테스트·측정에서 캐시 상태를 초기화할 때 사용 */
+    public void clearCache() {
+        cache.clear();
+    }
+
+    /** 현재 캐시에 들어 있는 항목 수 (메모리 사용량 관찰용) */
+    public int cacheSize() {
+        return cache.size();
     }
 
     // 외부 호출 최소 간격 보장 (아주 단순한 방식)

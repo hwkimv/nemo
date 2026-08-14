@@ -15,6 +15,7 @@
 | 02 | [Supabase PostgreSQL 전환 후 런타임 하드닝](case-studies/02-postgres-runtime-hardening.md) | 프로필 분리, 운영 smoke test, 개발용 표면 차단 | `Verified` |
 | 03 | [인증·권한 경계의 구멍 4개 막기](case-studies/03-security-boundaries.md) | 타인 사진 접근 차단, 토큰 로그 제거, 회귀 테스트 17개 | `Verified` |
 | 04 | [앨범 목록 N+1 제거와 측정](case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** | `Verified` |
+| 05 | [지도 API 캐시가 가리고 있던 것](case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 캐시가 가린 버그 발견 | `Verified` |
 
 ---
 
@@ -26,8 +27,9 @@
 |---|---|
 | [2026-08-05 성능 기준선](evidence/2026-08-05-baseline.md) | 개선 전 Before. 앨범 202 쿼리 / 121.21ms |
 | [2026-08-14 After 측정과 인덱스 판단](evidence/2026-08-14-after-and-index.md) | 같은 환경 Before/After, 실행 계획, 인덱스 비교 |
+| [2026-08-14 지도 API 캐시 측정](evidence/2026-08-14-map-cache.md) | 캐시 OFF/ON, 외부 호출 수, TTL 만료, 메모리 한계 |
 
-**재현 도구**는 `tools/performance/`에 있습니다 — k6 스크립트, 시드 SQL, 실행 계획 SQL, 인덱스 SQL.
+**재현 도구**는 `tools/performance/`에 있습니다 — k6 스크립트, 시드 SQL, 실행 계획 SQL, 인덱스 SQL, 네이버 API 스텁.
 
 ---
 
