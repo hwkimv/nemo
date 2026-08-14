@@ -19,6 +19,7 @@
 | 06 | [지표를 붙이고 나서 알게 된 것](case-studies/06-monitoring.md) | 레이트 리미터가 동시 요청에 무력. 5회/초 의도 → 40회/초 | `Verified` |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](case-studies/07-ci-cd.md) | CI 관문 구축. 설정 누락·S3 기동 결합도 수정 | `Verified` |
 | 08 | [Sentry를 붙였는데 이벤트가 0건이었다](case-studies/08-sentry.md) | 중복 친구 요청 500 → 409. 토큰 스크러빙 검증 | `Verified` |
+| 09 | [unique 제약이 지켜주지 않는 조건 하나](case-studies/09-concurrency.md) | 동시 업로드로 저장 한도 초과 (26장 → 20장) | `Verified` |
 
 ---
 
