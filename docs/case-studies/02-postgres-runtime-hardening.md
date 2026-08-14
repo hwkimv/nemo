@@ -140,6 +140,6 @@ Supabase 연결 환경변수는 프로세스 메모리에만 로드하고 출력
 
 ## 11. 관련 문서
 
-- [설계 문서](../../superpowers/specs/2026-08-02-runtime-hardening-and-evidence-documentation-design.md)
-- [구현 계획](../../superpowers/plans/2026-08-02-runtime-hardening-and-evidence-documentation.md)
-- [프로젝트 문서 인덱스](../README.md)
+- [설계 문서](../reference/design-records/specs/2026-08-02-runtime-hardening-and-evidence-documentation-design.md)
+- [구현 계획](../reference/design-records/plans/2026-08-02-runtime-hardening-and-evidence-documentation.md)
+- [문서 인덱스](../README.md)

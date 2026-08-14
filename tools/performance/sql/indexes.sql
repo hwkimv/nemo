@@ -1,7 +1,7 @@
 -- ============================================================
 -- photos 조회 인덱스
 -- ============================================================
--- 근거: docs/project/performance/2026-08-14-after-and-index-evidence.md
+-- 근거: docs/evidence/2026-08-14-after-and-index.md
 --
 -- 왜 JPA @Table(indexes = ...) 로 선언하지 않았는가:
 -- 아래 두 인덱스는 부분 인덱스(WHERE deleted = false), 정렬 방향(DESC),
