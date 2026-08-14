@@ -39,13 +39,9 @@ public class AlbumController {
     ) {
         Long userId = authExtractor.extractUserId(authorizationHeader);
 
-        // favoriteOnly + ownership 반영
-        List<AlbumSummaryResponse> all =
-                new ArrayList<>(albumService.getAlbums(userId, ownership, favoriteOnly));
-
-        // ===== 정렬 적용 =====
+        // 정렬 파라미터 파싱 ("createdAt,desc" 형태). 기본은 최신순.
         String field = "createdAt";
-        boolean asc = false; // default = 최신순 (desc)
+        boolean asc = false;
 
         if (sort != null && !sort.isBlank()) {
             String[] parts = sort.split(",");
@@ -55,38 +51,14 @@ public class AlbumController {
             }
         }
 
-        Comparator<AlbumSummaryResponse> comparator;
+        // 정렬·페이지 나누기를 DB에서 끝낸다.
+        // 예전에는 전체 목록을 만든 뒤 메모리에서 정렬하고 subList()로 잘랐다.
+        // 1페이지만 보려 해도 앨범 전부와 그 사진 정보를 메모리에 올리는 구조였다.
+        AlbumService.AlbumPageResult result =
+                albumService.getAlbumPage(userId, ownership, favoriteOnly, field, asc, page, size);
 
-        switch (field) {
-            case "title", "name" -> {
-                comparator = Comparator.comparing(
-                        AlbumSummaryResponse::getTitle,
-                        String.CASE_INSENSITIVE_ORDER
-                );
-            }
-            case "createdAt" -> {
-                comparator = Comparator.comparing(AlbumSummaryResponse::getCreatedAt);
-            }
-            default -> {
-                // 잘못된 필드가 들어오면 createdAt 기준으로
-                comparator = Comparator.comparing(AlbumSummaryResponse::getCreatedAt);
-            }
-        }
-
-        if (!asc) {
-            comparator = comparator.reversed();
-        }
-        all.sort(comparator);
-        // ===== 정렬 끝 =====
-
-        int fromIndex = Math.max(page * size, 0);
-        if (fromIndex > all.size()) {
-            fromIndex = all.size();
-        }
-        int toIndex = Math.min(fromIndex + size, all.size());
-        List<AlbumSummaryResponse> content = all.subList(fromIndex, toIndex);
-
-        int totalElements = all.size();
+        List<AlbumSummaryResponse> content = result.content();
+        long totalElements = result.totalElements();
         int totalPages = (int) Math.ceil(totalElements / (double) size);
 
         Map<String, Object> pageInfo = Map.of(
