@@ -215,11 +215,13 @@ jobs:
         working-directory: frontend
         run: flutter pub get
 
-      # analyze 는 경고가 많을 수 있어 우선 오류만 파이프라인을 막는다.
-      # 경고까지 막으려면 --fatal-warnings 를 붙인다.
+      # flutter analyze 는 info 수준 지적만 있어도 종료코드가 0이 아니다.
+      # 현재 코드베이스에는 info 가 많아(avoid_print, constant_identifier_names 등)
+      # 그대로 두면 CI 가 상시 빨간불이 되고, 그러면 아무도 CI 를 보지 않게 된다.
+      # 우선 error 만 파이프라인을 막고, info/warning 은 로그로 남겨 점진적으로 줄인다.
       - name: 정적 분석
         working-directory: frontend
-        run: flutter analyze --no-fatal-warnings
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: 테스트 실행
         working-directory: frontend

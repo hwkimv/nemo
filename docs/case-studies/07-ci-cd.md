@@ -152,12 +152,43 @@ log.warn("[S3] 버킷 확인 실패 — 스토리지 없이 기동합니다. "
 | 백엔드 테스트 | **94개** 통과 |
 | compose mount 경로 | 설정 파일 전부 존재 (빌드 산출물 제외) |
 
+### 첫 실행이 바로 두 가지를 더 잡았다
+
+PR을 올리자 CI가 실제로 돌았고 **실패했습니다.** 그리고 그 실패가 둘 다 진짜 문제였습니다.
+
+**③ `gradlew`에 실행 권한이 없었다**
+
+```
+./gradlew: Permission denied     (exit 126)
+```
+
+`backend/gradlew`가 git에 `100644`로 커밋돼 있었습니다. 실행 비트가 없습니다.
+
+로컬에서는 `sh gradlew`로 우회하면 되고, `Dockerfile`은 `RUN chmod +x gradlew`가 있어
+가려져 있었습니다. **아무 CI도 없었기 때문에 아무도 몰랐습니다.**
+
+```bash
+git update-index --chmod=+x backend/gradlew
+```
+
+**④ `flutter analyze`는 info만 있어도 실패한다**
+
+`--no-fatal-warnings`를 붙였는데도 실패했습니다. 로그에는 `error`가 하나도 없고
+전부 `info`(`avoid_print`, `constant_identifier_names` 등)였습니다.
+
+`flutter analyze`는 지적이 하나라도 있으면 종료코드가 0이 아닙니다.
+`--no-fatal-infos`까지 붙여야 error만 파이프라인을 막습니다.
+
+> 이걸 그대로 두면 CI가 **상시 빨간불**이 됩니다. 그러면 아무도 CI를 보지 않게 되고,
+> 관문은 이름만 남습니다. 우선 error만 막고 info/warning은 로그로 남겨 점진적으로 줄입니다.
+
+**"워크플로를 실제로 실행해보지 못했다"는 한계가 이 PR에서 바로 해소됐습니다.**
+그리고 실행해보지 않았다면 위 두 가지는 계속 몰랐을 것입니다.
+
 ---
 
 ## Limit / Next Condition
 
-- **워크플로를 GitHub에서 실제로 실행해보지 못했습니다.** `actionlint`로 문법·액션 사용을
-  검증했지만, 러너에서의 실행은 PR이 올라가야 확인됩니다. **첫 실행 결과를 보고 조정이 필요합니다.**
 - **브랜치 보호 규칙은 저장소 설정이라 코드로 넣을 수 없습니다.**
   `main`에 대해 `backend-test` 통과를 필수로 지정해야 관문이 실제로 강제됩니다.
 - **배포 스텝이 없습니다.** 대상 플랫폼이 정해지면 `deploy.yml`의 `push-image` 뒤에 붙입니다.

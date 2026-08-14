@@ -216,5 +216,5 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
 - **지도 API의 레이트 리미터가 동시 요청에 동작하지 않습니다.** 의도는 초당 5회인데 동시 8건이면 초당 40회가 나갑니다. 모니터링을 붙이며 발견했고 아직 고치지 않았습니다. ([CS 06](docs/case-studies/06-monitoring.md))
 - **Grafana 대시보드를 실제 화면으로 확인하지 못했습니다.** 작업 환경의 Docker가 불안정해 `promtool`로 설정·쿼리 문법만 검증했습니다.
-- **CI 워크플로를 GitHub에서 실행해보지 못했습니다.** `actionlint`로 문법·액션 사용만 검증했습니다. 첫 PR 실행 결과를 보고 조정이 필요합니다.
+- **Flutter 정적 분석은 error만 파이프라인을 막습니다.** `info` 지적(`avoid_print` 등)이 많아 우선 error만 막고 점진적으로 줄입니다.
 - **배포 스텝이 없습니다.** `deploy.yml`은 배포 전 관문(테스트·secret 확인·이미지 push)까지만 있고, 실제 배포는 대상 플랫폼이 정해지면 붙입니다.
