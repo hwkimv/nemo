@@ -70,25 +70,24 @@ private final Cache<String, Map<String, Object>> cache;   // 하나
 
 ---
 
-## 4. 측정 — 로컬 스텁, 동일 요청 10회
+## 4. 측정 — **실제 NAVER API**, 동일 요청 10회
 
-```
-앱 ─────────────► naver-stub ─────► 호출 수를 직접 센다
-   Local Search
-   Reverse Geocode
-```
+스텁이 아니라 **실제 네이버 API에 키를 붙여** 측정했습니다.
+스텁은 제가 정한 대로 응답하므로 "정책이 실제 트래픽에서 도는가"를 답하지 못합니다.
 
-- 스텁: `tools/performance/naver-stub/stub.py` (응답 지연 50ms 고정)
 - 요청: **완전히 동일한 뷰포트 10회** (강남역, `neLat=37.5030 … swLng=127.0350`)
-- 각 조건마다 **앱을 재시작**해 캐시를 비운 상태에서 시작
+- 조건마다 **앱을 재시작**해 캐시가 빈 상태에서 시작
+- **첫 요청도 측정 안에 포함**합니다. 따로 빼면 그 요청이 캐시를 데워 조건 간 비교가 깨집니다
+- 외부 호출 수는 `naver_api_calls_total` 지표로 셉니다 (호출하는 자리에서 직접 카운트)
+- API 키는 환경변수로만 주입했고 저장소·문서 어디에도 쓰지 않았습니다
 
 ### 결과
 
-| 조건 | local-search TTL | reverse TTL | 스텁이 받은 Local | 스텁이 받은 Reverse | **총 외부 호출** |
-|---|---:|---:|---:|---:|---:|
-| **A** | **0 (OFF)** | 1800 | **90** | **1** | **91** |
-| **B** | 300 | 1800 | **9** | **1** | **10** |
-| **C** | 300 | **0 (OFF)** | **9** | **10** | **19** |
+| 조건 | local TTL | reverse TTL | 외부 Local | 외부 Reverse | **총 외부 호출** | 10회 소요 | **뷰포트 내 결과** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **A** | **0 (OFF)** | 1800 | **90** | 1 | **91** | 18,907ms | **3건** |
+| **B** | 300 | 1800 | **9** | 1 | **10** | 2,058ms | **3건** |
+| **C** | 300 | **0 (OFF)** | 9 | **10** | **19** | 3,705ms | **3건** |
 
 ### 같은 시점의 캐시 지표 (`/actuator/prometheus`)
 
@@ -112,13 +111,21 @@ private final Cache<String, Map<String, Object>> cache;   // 하나
    꺼진 캐시는 지표 자체가 등록되지 않습니다.
    Grafana에서 시계열이 사라지는 것이 곧 "이 캐시는 꺼져 있다"는 신호가 됩니다.
 
-> ⚠️ **응답 시간은 비교 근거로 쓰지 않습니다.**
-> 이 측정의 시간 차이는 스텁의 고정 지연 50ms와 클라이언트 레이트 리미터(200ms 간격)가
-> 대부분을 만듭니다. 실제 네이버 API가 아닙니다.
-> **TTL 120초와 300초의 성능을 비교한 적이 없으므로 "TTL을 늘려 빨라졌다"고 말할 수 없습니다.**
-> 이 측정이 말하는 것은 **호출 수와 hit/miss가 정책대로 나온다**는 것뿐입니다.
+4. **결과가 바뀌지 않는다.**
+   세 조건 모두 뷰포트 내 결과가 **3건으로 동일**합니다.
+   캐시는 성능 장치이지 기능이 아니라는 것이 실제 응답으로 확인됩니다.
 
----
+### 응답 시간을 어디까지 말할 수 있나
+
+| 비교 | 말할 수 있는 것 |
+|---|---|
+| A(18.9초) vs B(2.1초) | **캐시가 있고 없고의 차이**입니다. 같은 요청 10회 중 9회가 네트워크를 타지 않습니다 |
+| B(2.1초) vs C(3.7초) | Reverse Geocoding 캐시가 있고 없고의 차이입니다 |
+| TTL 120초 vs 300초 | **측정하지 않았습니다. 말할 수 없습니다** |
+
+> ⚠️ **"TTL을 120초에서 300초로 늘려 빨라졌다"는 이 측정으로 뒷받침되지 않습니다.**
+> 세 조건 모두 캐시 ON/OFF를 비교한 것이지 TTL 값을 비교한 것이 아닙니다.
+> 5분/30분은 데이터 특성으로 정한 초기값이고, 조정 근거는 운영 지표에서 나와야 합니다.
 
 ## 5. 모니터링 — Grafana에서 실제로 보이는가
 
@@ -137,7 +144,7 @@ Micrometer에 바인딩해 Prometheus → Grafana로 내보냈습니다.
 캐시 키(요청 URI)는 **태그로 쓰지 않았습니다.** 검색어마다 시계열이 생겨 지표가 폭발합니다.
 태그는 `cache` 하나뿐이고 값은 2개라 카디널리티가 안전합니다.
 
-### 실제 화면
+### 실제 화면 (실제 NAVER API 기준)
 
 ![캐시 패널이 포함된 대시보드](screenshots/grafana-dashboard-with-cache.png)
 
@@ -147,20 +154,28 @@ Micrometer에 바인딩해 Prometheus → Grafana로 내보냈습니다.
 
 **두 캐시가 다르게 동작하는 것이 한눈에 보입니다.**
 
-- `local-search` **100%** — 같은 지역이면 검색어가 같아 항상 적중합니다.
-- `reverse-geocoding` **70%** — 좌표가 곧 키라서, 지도를 움직이면 매번 새 키가 됩니다.
+- `local-search` **98.9%** — 지도를 옮겨도 지역명이 같으면 검색어가 같아 적중합니다
+- `reverse-geocoding` **69.9%** — 좌표가 곧 키라서, 지도를 움직이면 매번 새 키가 됩니다
 
-이 차이가 **캐시를 나눈 이유를 그대로 보여줍니다.** 하나의 Map이었다면 이 두 숫자는
-섞여 하나의 값이 되고, 어느 쪽이 문제인지 알 수 없었습니다.
+이 차이가 **캐시를 나눈 이유를 그대로 보여줍니다.** 하나의 캐시였다면 이 두 숫자는
+하나로 합쳐지고, 어느 쪽이 발목을 잡는지 알 수 없었습니다.
 
-![캐시 축출](screenshots/grafana-cache-eviction.png)
+![네이버로 실제 나간 외부 호출](screenshots/grafana-naver-api-calls.png)
 
-`reverse-geocoding`만 축출이 발생합니다.
-이 화면은 **`maximumSize`를 일부러 5로 좁혀** 축출을 눈에 보이게 만든 것입니다
-(기본값 1000에서는 이 부하로 축출이 나지 않습니다).
+적중률만으로는 부족합니다. **비용은 "밖으로 몇 번 나갔는가"** 로 발생합니다.
+적중률이 98.9%인 `local-search`가 실제 호출은 더 적고,
+69.9%인 `reverse-geocoding`이 더 많이 나가는 것이 이 패널에서 드러납니다.
 
-축출이 계속 오른다는 것은 **상한이 작아 캐시가 제 역할을 못 하고 있다**는 신호입니다.
-운영에서 이 그래프가 이렇게 보이면 `maximum-size`를 올려야 합니다.
+![캐시에서 빠진 항목](screenshots/grafana-cache-eviction.png)
+
+> **여기서 하나 배웠습니다.** 처음에는 이 패널을 "maximumSize에 눌려 밀려난 수"로 설명했는데,
+> 실제로 돌려보니 상한에 한참 못 미치는 `local-search`에도 값이 잡혔습니다.
+> Caffeine의 `evictionCount()`는 **TTL 만료로 빠진 것도 함께 셉니다.**
+> 그래서 패널 이름을 「캐시에서 빠진 항목 (eviction + 만료)」로 고쳤습니다.
+> 대시보드를 실제로 띄워보지 않았으면 틀린 설명을 그대로 뒀을 것입니다.
+
+「캐시 항목 수」 패널에서 `local-search`가 한 번 0으로 떨어졌다가 다시 차오릅니다.
+**TTL 300초가 지나 한꺼번에 만료된 것**입니다. `expireAfterWrite`가 눈에 보이는 순간입니다.
 
 ### 부하 조건
 
@@ -168,33 +183,43 @@ Micrometer에 바인딩해 Prometheus → Grafana로 내보냈습니다.
 지도를 옮기면 좌표가 달라져 Reverse Geocoding 캐시 키가 새로 생깁니다.
 Local Search는 같은 지역명으로 수렴하므로 적중이 쌓입니다.
 
+**실제 네이버 API를 씁니다.** 쿼터를 아끼려고 요청 사이에 150ms 간격을 뒀고,
+약 12분 동안 2,100여 건을 보냈습니다.
+축출을 눈에 보이게 하려고 `reverse-geocoding`의 `maximum-size`만 **5로 좁혔습니다**
+(기본값 1000에서는 이 부하로 상한에 닿지 않습니다).
+
 ---
 
 ## 6. 재현
 
 ```bash
-# 1) 스텁
-python3 tools/performance/naver-stub/stub.py --port 9999 --latency-ms 50 &
-
-# 2) 조건별로 앱 실행 (캐시를 비우기 위해 조건마다 재시작)
+# 조건별로 앱 실행 (캐시를 비우기 위해 조건마다 재시작)
 cd backend && SPRING_PROFILES_ACTIVE=dev \
-  NAVER_LOCAL_CLIENT_ID=stub NAVER_LOCAL_CLIENT_SECRET=stub \
-  NAVER_MAP_CLIENT_ID=stub NAVER_MAP_CLIENT_SECRET=stub \
-  NAVER_OPENAPI_LOCAL_ENDPOINT=http://localhost:9999/v1/search/local.json \
-  NAVER_OPENAPI_REVERSE_ENDPOINT=http://localhost:9999/map-reversegeocode/v2/gc \
+  NAVER_LOCAL_CLIENT_ID=... NAVER_LOCAL_CLIENT_SECRET=... \
+  NAVER_MAP_CLIENT_ID=...   NAVER_MAP_CLIENT_SECRET=... \
   NAVER_LOCAL_SEARCH_CACHE_TTL_SECONDS=300 \
   NAVER_REVERSE_GEOCODING_CACHE_TTL_SECONDS=1800 \
   APP_S3_CREATEBUCKETIFMISSING=false ./gradlew bootRun
 
-# 3) 동일 요청 10회 + 계측
+# 동일 요청 10회 (첫 요청도 포함해서 센다)
 TOKEN=$(curl -s -X POST "http://localhost:8080/api/auth/dev/seed?email=cache@nemo.test" | jq -r .accessToken)
-curl -s -X POST http://localhost:9999/__reset
 for i in $(seq 1 10); do
   curl -s -o /dev/null -H "Authorization: Bearer $TOKEN" \
     "http://localhost:8080/api/map/photobooths/viewport?neLat=37.5030&neLng=127.0450&swLat=37.4930&swLng=127.0350"
 done
-curl -s http://localhost:9999/__stats                                      # 실제 외부 호출 수
-curl -s http://localhost:8080/actuator/prometheus | grep '^cache_'         # hit/miss/eviction/size
+
+# 실제로 네이버로 나간 호출 수 + 캐시 적중/축출
+curl -s http://localhost:8080/actuator/prometheus | grep -E '^(naver_api_calls|cache_)'
+```
+
+조건을 바꿀 때는 `NAVER_LOCAL_SEARCH_CACHE_TTL_SECONDS=0` (Local만 OFF) 또는
+`NAVER_REVERSE_GEOCODING_CACHE_TTL_SECONDS=0` (Reverse만 OFF)으로 다시 띄웁니다.
+
+키 없이 캐시 동작만 확인하려면 스텁을 씁니다.
+
+```bash
+python3 tools/performance/naver-stub/stub.py --port 9999 --latency-ms 50 &
+cd backend && ./gradlew mapCacheMeasurement     # 스텁 기반 OFF/ON 비교
 ```
 
 캐시 동작 자체는 테스트로도 고정돼 있습니다.
@@ -202,8 +227,6 @@ curl -s http://localhost:8080/actuator/prometheus | grep '^cache_'         # hit
 ```bash
 cd backend && ./gradlew test --tests '*NaverApiCacheTest*' --tests '*PhotoboothCacheRegressionTest*'
 ```
-
----
 
 ## 7. Trade-off와 한계
 
@@ -217,12 +240,12 @@ cd backend && ./gradlew test --tests '*NaverApiCacheTest*' --tests '*PhotoboothC
   - 공유가 필요해지면 Redis를 봐야 하지만, **지금은 인스턴스가 1개라 근거가 없습니다.**
 - **`maximumSize`는 바이트가 아니라 항목(entry) 개수입니다.**
   응답 크기가 큰 항목이 많으면 1000개라도 메모리를 많이 쓸 수 있습니다. 아직 측정하지 않았습니다.
-- **부하가 낮습니다.** 로컬 스텁 기준이고 실제 트래픽 패턴이 아닙니다.
+- **부하 패턴이 인위적입니다.** 실제 네이버 API를 쓰긴 했지만 요청 패턴은 제가 만든 것이고, 실사용자 트래픽이 아닙니다.
 - 캐시 지표에 대한 **알림 규칙은 만들지 않았습니다.**
 
 ## 8. 아직 하지 않은 것
 
-- 실제 네이버 API로 hit ratio 관찰 (이 측정은 전부 스텁입니다)
+- **여러 지역·시간대 반복 측정.** 이번 측정은 강남역 한 곳 기준입니다
 - `maximum-size` 기본값 1000의 근거 확보 (현재는 임의값)
 - 캐시 메모리 사용량(바이트) 측정
 - hit ratio 저하 / eviction 급증에 대한 알림

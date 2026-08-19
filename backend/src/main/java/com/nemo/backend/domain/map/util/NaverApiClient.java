@@ -2,6 +2,7 @@
 package com.nemo.backend.domain.map.util;
 
 import com.github.benmanes.caffeine.cache.Ticker;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -74,6 +75,20 @@ public class NaverApiClient {
     private final NaverResponseCache localSearchCache;
     private final NaverResponseCache reverseGeocodeCache;
 
+    // ───────────────────────────────────────────────────────────────
+    // 실제로 네이버로 나간 호출 수
+    //
+    // 캐시 miss와 외부 호출은 보통 1:1이지만 같은 값이 아니다.
+    //   · 429 재시도가 붙으면 miss 1건에 호출이 여러 번 나간다
+    //   · 캐시를 끄면 miss 지표 자체가 없어서 호출 수를 알 수 없다
+    // 캐시 효과는 "적중률"이 아니라 "밖으로 몇 번 나갔는가"로 확인해야 한다.
+    // 그래서 호출하는 자리에서 직접 센다.
+    //
+    // 태그는 api 하나(값 2개)뿐이다. 검색어나 좌표는 태그로 쓰지 않는다 — 지표가 폭발한다.
+    // ───────────────────────────────────────────────────────────────
+    private final Counter localSearchCalls;
+    private final Counter reverseGeocodeCalls;
+
     /**
      * @param localSearchTtlSeconds     업체 검색 결과 캐시 유효시간. 기본 5분.
      *                                  0이면 이 캐시만 꺼진다.
@@ -120,6 +135,15 @@ public class NaverApiClient {
         // Prometheus로 내보내 Grafana에서 적중률·축출·크기를 본다.
         localSearchCache.bindTo(meterRegistry);
         reverseGeocodeCache.bindTo(meterRegistry);
+
+        this.localSearchCalls = Counter.builder("naver.api.calls")
+                .description("네이버 외부 API로 실제로 나간 호출 수")
+                .tag("api", "local-search")
+                .register(meterRegistry);
+        this.reverseGeocodeCalls = Counter.builder("naver.api.calls")
+                .description("네이버 외부 API로 실제로 나간 호출 수")
+                .tag("api", "reverse-geocoding")
+                .register(meterRegistry);
 
         log.info("[NAVER][CACHE] {} | {}", localSearchCache.describe(), reverseGeocodeCache.describe());
     }
@@ -185,6 +209,7 @@ public class NaverApiClient {
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
+                localSearchCalls.increment();   // 재시도도 실제로 나간 호출이므로 시도마다 센다
                 ResponseEntity<Map> res = restTemplate.exchange(uri, HttpMethod.GET, httpEntity, Map.class);
                 Map<String, Object> body = res.getBody();
 
@@ -263,6 +288,7 @@ public class NaverApiClient {
         enforceMinInterval();
 
         try {
+            reverseGeocodeCalls.increment();
             ResponseEntity<Map> res = restTemplate.exchange(uri, HttpMethod.GET, httpEntity, Map.class);
             Map<String, Object> body = res.getBody();
 

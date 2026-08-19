@@ -25,7 +25,7 @@
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 지도 외부 호출 감축 (실제 API) | 뷰포트 1회 **25 → 10회**, 응답 **4,770 → 1,857ms** (결과 동일) | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 지도 API HUB 이관 대응 | 지역 검색 401 → 200. 구 경로가 NCP 키를 못 받는 것을 실측으로 확인 | [CS 05](docs/case-studies/05-map-api-cache.md) |
-| 캐시를 데이터 성격별로 분리 | Local Search 5분 / Reverse Geocoding 30분. Grafana 적중률 **100% / 70%** | [CS 05](docs/case-studies/05-map-api-cache.md) |
+| 캐시를 데이터 성격별로 분리 | Local Search 5분 / Reverse Geocoding 30분. 실제 API 적중률 **98.9% / 69.9%** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
 | CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
 | Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |

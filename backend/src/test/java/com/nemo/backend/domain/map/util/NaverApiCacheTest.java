@@ -419,6 +419,31 @@ class NaverApiCacheTest {
         }
 
         @Test
+        @DisplayName("실제로 나간 외부 호출 수가 지표로 나간다 — 캐시를 꺼도 셀 수 있다")
+        void externalCallsAreCounted() {
+            newClient(0, DEFAULT_MAX_SIZE, DEFAULT_REVERSE_TTL, DEFAULT_MAX_SIZE);
+
+            for (int i = 0; i < 5; i++) {
+                client.searchLocal("강남구 인생네컷", 5, 1, "random");
+                client.reverseGeocodeToRegion(37.4979, 127.0276);
+            }
+
+            double localOut = meterRegistry.get("naver.api.calls").tag("api", "local-search").counter().count();
+            double reverseOut = meterRegistry.get("naver.api.calls").tag("api", "reverse-geocoding").counter().count();
+
+            assertThat(localOut)
+                    .as("""
+                            캐시가 꺼져 있으면 cache_gets 지표 자체가 없다.
+                            그래도 "밖으로 몇 번 나갔는가"는 알 수 있어야 캐시 효과를 비교할 수 있다.""")
+                    .isEqualTo(5);
+            assertThat(localOut).isEqualTo(localCalls.get());
+            assertThat(reverseOut)
+                    .as("Reverse Geocoding 캐시는 켜져 있으므로 1번만 나간다")
+                    .isEqualTo(1)
+                    .isEqualTo(reverseCalls.get());
+        }
+
+        @Test
         @DisplayName("꺼진 캐시는 지표를 등록하지 않는다")
         void disabledCacheIsNotRegistered() {
             newClient(0, DEFAULT_MAX_SIZE, DEFAULT_REVERSE_TTL, DEFAULT_MAX_SIZE);

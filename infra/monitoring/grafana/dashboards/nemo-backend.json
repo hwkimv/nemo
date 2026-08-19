@@ -465,8 +465,8 @@
     {
       "id": 15,
       "type": "timeseries",
-      "title": "캐시 축출 (eviction, 초당)",
-      "description": "maximumSize를 넘어 밀려난 항목 수. 계속 오르면 상한이 작아서 캐시가 제 역할을 못 하고 있다는 신호다. 0이면 상한에 여유가 있다는 뜻이고, TTL 만료로 사라진 것은 여기 포함되지 않는다.",
+      "title": "캐시에서 빠진 항목 (eviction + 만료, 초당)",
+      "description": "캐시에서 빠져나간 항목 수. maximumSize에 눌려 밀려난 것과 TTL이 지나 만료된 것이 함께 잡힌다(Caffeine의 evictionCount는 둘 다 센다). 크기 대비 급증하면 상한이 작다는 뜻이고, TTL이 짧은 캐시는 평상시에도 꾸준히 올라간다. cache_size와 같이 봐야 어느 쪽인지 알 수 있다.",
       "gridPos": {
         "h": 6,
         "w": 8,
@@ -501,7 +501,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 30
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {
@@ -533,6 +533,36 @@
           "refId": "A",
           "expr": "sum by (cache) (increase(cache_gets_total{job=\"nemo-backend\", result=\"hit\"}[5m]))",
           "legendFormat": "{{cache}}"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "네이버로 실제 나간 외부 호출 (초당)",
+      "description": "캐시 miss와 1:1이 아니다. 429 재시도가 붙으면 miss 1건에 호출이 여러 번 나가고, 캐시를 끄면 miss 지표 자체가 사라진다. 캐시 효과는 적중률이 아니라 '밖으로 몇 번 나갔는가'로 확인해야 하므로 호출하는 자리에서 직접 센다.",
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 0,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "noValue": "0",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (api) (rate(naver_api_calls_total{job=\"nemo-backend\"}[5m]))",
+          "legendFormat": "{{api}}"
         }
       ]
     }
