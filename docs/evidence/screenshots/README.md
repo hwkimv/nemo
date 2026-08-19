@@ -1,6 +1,6 @@
 # Grafana 대시보드 화면
 
-**촬영일:** 2026-08-15
+**촬영일:** 2026-08-15 (지도 캐시 패널은 2026-08-20)
 **대시보드:** `infra/monitoring/grafana/dashboards/nemo-backend.json`
 
 Grafana Image Renderer로 자동 생성했습니다. 손으로 캡처한 것이 아니라
@@ -52,6 +52,40 @@ histogram_quantile(0.95, sum by (le, uri) (rate(http_server_requests_seconds_buc
 `max` 대신 **`committed`**(JVM이 실제로 확보한 양)를 넣었습니다.
 150MB vs 182MB로 같은 스케일이라 **GC 톱니와 확보량 증가가 함께 보입니다.**
 한계 대비 여유는 옆의 `Heap 사용률` 패널(`used / max`)이 담당합니다.
+
+---
+
+## 지도 외부 API 캐시 (2026-08-20 추가)
+
+![캐시 패널이 포함된 대시보드](grafana-dashboard-with-cache.png)
+
+맨 아래 「지도 외부 API 캐시」 행이 새로 붙은 부분입니다.
+Local Search와 Reverse Geocoding 캐시를 분리하면서, 각각의 hit/miss·size·eviction을
+Micrometer로 내보내 Grafana에서 따로 보게 했습니다.
+
+### 캐시 적중률
+
+![캐시 적중률](grafana-cache-hit-ratio.png)
+
+**두 캐시가 다르게 동작하는 것이 한눈에 보입니다.**
+
+- `local-search` **100%** — 같은 지역이면 검색어가 같아 항상 적중합니다
+- `reverse-geocoding` **70%** — 좌표가 곧 캐시 키라서, 지도를 움직이면 매번 새 키가 됩니다
+
+이 차이가 캐시를 나눈 이유 그 자체입니다.
+하나의 Map이었다면 두 숫자가 섞여 하나가 되고, 어느 쪽이 문제인지 알 수 없었습니다.
+
+### 캐시 축출
+
+![캐시 축출](grafana-cache-eviction.png)
+
+`reverse-geocoding`에서만 축출이 일어납니다.
+이 화면은 **`maximum-size`를 일부러 5로 좁혀** 축출을 눈에 보이게 만든 것입니다.
+기본값 1000에서는 이 정도 부하로 축출이 나지 않습니다.
+
+축출이 계속 오르면 **상한이 작아 캐시가 제 역할을 못 한다**는 신호입니다.
+
+측정 조건과 한계: [2026-08-20 지도 캐시 분리와 TTL 정책 검증](../2026-08-20-map-cache-split.md)
 
 ---
 

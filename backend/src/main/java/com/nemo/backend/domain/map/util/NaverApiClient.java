@@ -1,6 +1,9 @@
 // src/main/java/com/nemo/backend/domain/map/util/NaverApiClient.java
 package com.nemo.backend.domain.map.util;
 
+import com.github.benmanes.caffeine.cache.Ticker;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,9 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -58,23 +59,71 @@ public class NaverApiClient {
 
     private final RestTemplate restTemplate;
 
+    /** 캐시 지표를 Prometheus로 내보내기 위한 레지스트리 */
+    private final MeterRegistry meterRegistry;
+
     // ───────────────────────────────────────────────────────────────
-    // (A) 간단 캐시: 같은 요청(같은 URI)은 2분간 재사용
-    //     - Local Search / Reverse Geocode 둘 다 공통으로 사용
-    //     - key: 완성된 URI 문자열, value: 캐시 항목(응답+저장시각)
+    // (A) 응답 캐시 — 용도별로 2개를 따로 둔다
+    //
+    //     예전에는 Local Search와 Reverse Geocoding이 ConcurrentHashMap 하나를
+    //     TTL 120초로 같이 썼다. 두 데이터는 바뀌는 속도가 전혀 다르다.
+    //       · 업체 검색 결과   : 폐업·신규 오픈으로 바뀔 수 있다        → 짧게
+    //       · 좌표 → 행정구역 : 행정구역 개편이 아니면 안 바뀐다        → 길게
+    //     하나의 TTL로는 한쪽에 맞추면 다른 쪽이 손해였다. 그래서 분리했다.
+    //
+    //     key는 예전과 같다: 완성된 요청 URI 문자열.
+    //     같은 URI면 같은 응답이라는 전제는 그대로다. 바뀐 것은 "어디에 얼마나 담느냐"뿐이다.
     // ───────────────────────────────────────────────────────────────
+
     /**
-     * 캐시 유효시간(초). 기본 2분.
+     * Local Search 캐시 유효시간(초). 기본 5분.
      *
-     * 0으로 두면 캐시를 끈다. 캐시 효과를 측정할 때 같은 빌드로 ON/OFF를 비교하기 위해,
-     * 그리고 외부 응답이 이상할 때 운영에서 즉시 우회하기 위해 설정으로 뺐다.
+     * <p>구 환경변수 NAVER_CACHE_TTL_SECONDS 호환은 application.yml이 맡는다.
+     * 여기 기본값은 yml이 없는 단위 테스트에서만 쓰인다.
      */
-    @Value("${naver.cache.ttl-seconds:120}")
-    private long cacheTtlSeconds = Duration.ofMinutes(2).toSeconds();
+    @Value("${naver.cache.local-search.ttl-seconds:300}")
+    private long localSearchCacheTtlSeconds;
 
-    private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    @Value("${naver.cache.local-search.maximum-size:1000}")
+    private long localSearchCacheMaximumSize;
 
-    private record CacheEntry(Map<String, Object> body, long savedAtMs) {}
+    /**
+     * Reverse Geocoding 캐시 유효시간(초). 기본 30분.
+     *
+     * <p>Local Search보다 6배 길다. 같은 좌표의 주소는 훨씬 덜 바뀌기 때문이다.
+     * 다만 "안 바뀐다"가 아니라 "덜 바뀐다"이므로 무기한 캐시는 쓰지 않는다.
+     */
+    @Value("${naver.cache.reverse-geocoding.ttl-seconds:1800}")
+    private long reverseGeocodeCacheTtlSeconds;
+
+    @Value("${naver.cache.reverse-geocoding.maximum-size:1000}")
+    private long reverseGeocodeCacheMaximumSize;
+
+    /** 테스트에서 가짜 시계를 끼워 TTL 만료를 기다리지 않고 재현하기 위한 자리 */
+    private Ticker ticker = Ticker.systemTicker();
+
+    private NaverResponseCache localSearchCache;
+    private NaverResponseCache reverseGeocodeCache;
+
+    /**
+     * @Value 주입이 끝난 뒤 캐시를 만든다.
+     *
+     * 생성자에서 만들 수 없다. 그 시점에는 TTL·maximumSize가 아직 0이다.
+     */
+    @PostConstruct
+    public void initCaches() {
+        localSearchCache = new NaverResponseCache(
+                "local-search", localSearchCacheTtlSeconds, localSearchCacheMaximumSize, ticker);
+        reverseGeocodeCache = new NaverResponseCache(
+                "reverse-geocoding", reverseGeocodeCacheTtlSeconds, reverseGeocodeCacheMaximumSize, ticker);
+
+        // Prometheus로 내보내 Grafana에서 hit ratio·eviction·size를 본다.
+        localSearchCache.bindTo(meterRegistry);
+        reverseGeocodeCache.bindTo(meterRegistry);
+
+        log.info("[NAVER][CACHE] {} | {}", localSearchCache.describe(), reverseGeocodeCache.describe());
+    }
+
     // ───────────────────────────────────────────────────────────────
 
     // ───────────────────────────────────────────────────────────────
@@ -115,8 +164,8 @@ public class NaverApiClient {
 
         String cacheKey = uri.toString();
 
-        // 2) 캐시 확인 (2분 내면 재사용)
-        Map<String, Object> cached = loadFromCache(cacheKey);
+        // 2) 캐시 확인 (Local Search 전용 캐시, 기본 5분)
+        Map<String, Object> cached = localSearchCache.get(cacheKey);
         if (cached != null) {
             log.debug("[NAVER][CACHE-HIT][LOCAL] {}", cacheKey);
             return cached;
@@ -142,7 +191,7 @@ public class NaverApiClient {
                 Map<String, Object> body = res.getBody();
 
                 // 6) 성공: 캐시에 저장 후 반환
-                saveToCache(cacheKey, body);
+                localSearchCache.put(cacheKey, body);
                 return body;
 
             } catch (HttpClientErrorException.TooManyRequests e) {
@@ -198,8 +247,8 @@ public class NaverApiClient {
 
         String cacheKey = uri.toString();
 
-        // 1) 캐시 확인 (2분 내면 재사용)
-        Map<String, Object> cached = loadFromCache(cacheKey);
+        // 1) 캐시 확인 (Reverse Geocoding 전용 캐시, 기본 30분)
+        Map<String, Object> cached = reverseGeocodeCache.get(cacheKey);
         if (cached != null) {
             log.debug("[NAVER][CACHE-HIT][REVERSE] {}", cacheKey);
             return extractRegionNameFromReverseBody(cached);
@@ -219,7 +268,7 @@ public class NaverApiClient {
             ResponseEntity<Map> res = restTemplate.exchange(uri, HttpMethod.GET, httpEntity, Map.class);
             Map<String, Object> body = res.getBody();
 
-            saveToCache(cacheKey, body);
+            reverseGeocodeCache.put(cacheKey, body);
             return extractRegionNameFromReverseBody(body);
 
         } catch (Exception e) {
@@ -295,29 +344,35 @@ public class NaverApiClient {
         return Math.max(min, Math.min(max, v));
     }
 
-    private Map<String, Object> loadFromCache(String key) {
-        if (cacheTtlSeconds <= 0) return null; // 캐시 비활성
-        CacheEntry entry = cache.get(key);
-        if (entry == null) return null;
-        long age = System.currentTimeMillis() - entry.savedAtMs();
-        if (age <= cacheTtlSeconds * 1000L) return entry.body();
-        cache.remove(key); // 만료되면 정리
-        return null;
+    // ─────────────────────── 캐시 관찰용 API ─────────────────────────
+    //
+    // 캐시가 의도대로 동작하는지 확인하는 통로다. 두 캐시를 따로 볼 수 있어야
+    // "Local Search만 껐다", "Reverse Geocoding에서만 eviction이 났다"를 구분할 수 있다.
+
+    /** Local Search 캐시 (hit/miss/eviction 통계 포함) */
+    public NaverResponseCache localSearchCache() {
+        return localSearchCache;
     }
 
-    private void saveToCache(String key, Map<String, Object> body) {
-        if (cacheTtlSeconds <= 0) return; // 캐시 비활성
-        cache.put(key, new CacheEntry(Objects.requireNonNullElse(body, Map.of()), System.currentTimeMillis()));
+    /** Reverse Geocoding 캐시 (hit/miss/eviction 통계 포함) */
+    public NaverResponseCache reverseGeocodeCache() {
+        return reverseGeocodeCache;
     }
 
-    /** 테스트·측정에서 캐시 상태를 초기화할 때 사용 */
+    /** 테스트·측정에서 캐시 상태를 초기화할 때 사용 (두 캐시 모두) */
     public void clearCache() {
-        cache.clear();
+        localSearchCache.clear();
+        reverseGeocodeCache.clear();
     }
 
-    /** 현재 캐시에 들어 있는 항목 수 (메모리 사용량 관찰용) */
+    /**
+     * 두 캐시에 들어 있는 항목 수의 합.
+     *
+     * 개별 캐시 크기는 {@link #localSearchCache()} / {@link #reverseGeocodeCache()}의
+     * {@code size()}로 본다. 합계만 보면 어느 쪽이 커지는지 알 수 없다.
+     */
     public int cacheSize() {
-        return cache.size();
+        return (int) (localSearchCache.size() + reverseGeocodeCache.size());
     }
 
     // 외부 호출 최소 간격 보장 (아주 단순한 방식)

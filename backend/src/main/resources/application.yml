@@ -128,6 +128,32 @@ logging:
     level: "%5p [%X{requestId:-no-req-id}]"
 
 naver:
+  # =============================
+  # 지도 외부 API 응답 캐시
+  # =============================
+  # Local Search와 Reverse Geocoding은 데이터가 바뀌는 속도가 다르다.
+  # 예전에는 하나의 Map에 TTL 120초로 같이 넣었는데, 한쪽에 맞추면 다른 쪽이 손해였다.
+  # 그래서 캐시를 분리하고 TTL을 따로 준다.
+  #
+  #   local-search       업체 검색 결과. 폐업·신규 오픈으로 바뀔 수 있어 짧게(5분).
+  #   reverse-geocoding  좌표 → 행정구역. 거의 안 바뀌므로 길게(30분).
+  #
+  # ⚠️ 5분/30분은 "최적값"이 아니다. 데이터 특성으로 정한 초기값이다.
+  #    운영에서 Grafana의 hit ratio·eviction·외부 호출 수를 보고 조정할 값이다.
+  #
+  # ttl-seconds를 0으로 두면 그 캐시만 꺼진다. 다른 캐시는 그대로 동작한다.
+  # maximum-size는 바이트가 아니라 항목(entry) 개수다.
+  #
+  # 구 설정 NAVER_CACHE_TTL_SECONDS 는 남겨 뒀다(안쪽 기본값).
+  # docs/evidence의 기존 측정 재현 절차가 그 변수 하나로 캐시를 껐기 때문이다.
+  # 새 변수가 있으면 새 변수가 이긴다. 신규 설정에서는 쓰지 않는다.
+  cache:
+    local-search:
+      ttl-seconds: ${NAVER_LOCAL_SEARCH_CACHE_TTL_SECONDS:${NAVER_CACHE_TTL_SECONDS:300}}
+      maximum-size: ${NAVER_LOCAL_SEARCH_CACHE_MAXIMUM_SIZE:1000}
+    reverse-geocoding:
+      ttl-seconds: ${NAVER_REVERSE_GEOCODING_CACHE_TTL_SECONDS:${NAVER_CACHE_TTL_SECONDS:1800}}
+      maximum-size: ${NAVER_REVERSE_GEOCODING_CACHE_MAXIMUM_SIZE:1000}
   openapi:
     local:
       # NAVER API HUB 이관 후 경로. 구 경로는 NCP 발급 키를 받지 않는다(401).
