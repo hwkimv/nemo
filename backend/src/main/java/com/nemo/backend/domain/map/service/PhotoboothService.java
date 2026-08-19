@@ -46,7 +46,9 @@ public class PhotoboothService {
     );
 
     private static final int PAGE_SIZE = 5;               // 네이버 LocalSearch 최대 display=5
-    private static final int MAX_PAGES_PER_KEYWORD = 4;   // 한 키워드당 최대 20개 수집
+    // NAVER API HUB 지역 검색은 start 파라미터를 무시하고 항상 첫 5건만 준다(2026-08-15 실측).
+    // 페이지 개념이 없으므로 키워드당 1회만 호출한다.
+    private static final int MAX_RESULTS_PER_KEYWORD = PAGE_SIZE;
 
     /**
      * 뷰포트 증분(Delta) 조회
@@ -391,26 +393,18 @@ public class PhotoboothService {
         // ────────────────────────────────────────
         List<Map<String, Object>> raw = new ArrayList<>();
 
+        // ⚠️ 페이지 루프를 없앴다. NAVER API HUB의 지역 검색은 페이지네이션을 지원하지 않는다.
+        //
+        // 실측(2026-08-15, 실제 API):
+        //   start=1, 6, 11, 16 을 각각 보내도 응답의 start는 항상 1이고 items가 완전히 동일했다.
+        //   키워드 9개로 4페이지씩 돌린 결과, 페이지 2~4가 추가로 준 신규 장소는 0곳이었다.
+        //   display도 5가 상한이라 한 번에 더 받을 수도 없다.
+        //
+        // 즉 예전 루프는 같은 응답을 최대 4번 받으려고 외부 호출을 4배로 쓰고 있었다.
+        // 캐시가 켜져 있으면 2~4번째는 전부 hit이라 이 낭비도 드러나지 않았다.
         for (String kw : searchKeywords) {
-            int page = 0;
-            boolean hasMore = true;
-
-            while (hasMore && page < MAX_PAGES_PER_KEYWORD) {
-                page++;
-
-                // start는 1부터 시작 (1, 6, 11, 16...)
-                int start = 1 + (page - 1) * PAGE_SIZE;
-
-                Map<String, Object> res = naverApiClient.searchLocal(kw, PAGE_SIZE, start, "random");
-                List<Map<String, Object>> items = extractItems(res);
-
-                if (items.isEmpty()) {
-                    hasMore = false;  // 다음 페이지 없음
-                } else {
-                    raw.addAll(items);
-                    if (items.size() < PAGE_SIZE) hasMore = false; // 마지막 페이지
-                }
-            }
+            Map<String, Object> res = naverApiClient.searchLocal(kw, PAGE_SIZE, 1, "random");
+            raw.addAll(extractItems(res));
         }
 
         // ⭐ 로그(3) — 네이버 LocalSearch 결과 총합

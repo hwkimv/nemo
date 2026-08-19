@@ -61,7 +61,7 @@ class PhotoboothKeywordDedupTest {
     }
 
     @Test
-    @DisplayName("같은 검색어를 두 번 만들지 않는다 — 키워드 9개, 외부 호출 37회")
+    @DisplayName("키워드는 9개 중복 없이, 키워드당 1회만 호출한다")
     void viewportDoesNotRepeatTheSameKeyword() {
         List<String> seen = Collections.synchronizedList(new ArrayList<>());
         AtomicInteger calls = new AtomicInteger();
@@ -80,12 +80,15 @@ class PhotoboothKeywordDedupTest {
                 .as("""
                         같은 검색어가 두 번 만들어졌다.
                         KEYWORDS[0]이 "포토부스"인데 보조 키워드로 "지역명 + 포토부스"를 또 넣으면
-                        키워드 하나당 최대 %d페이지씩 외부 API를 중복 호출한다.
-                        실제 검색어: %s""".formatted(4, unique))
+                        같은 검색을 두 번 하게 된다.
+                        실제 검색어: %s""".formatted(unique))
                 .hasSize(9);
 
         assertThat(seen)
-                .as("중복이 없으면 페이지 호출도 9 x 4 = 36회여야 한다")
-                .hasSize(36);
+                .as("""
+                        키워드당 정확히 1회만 불러야 한다.
+                        NAVER API HUB 지역 검색은 start를 무시하고 항상 첫 5건만 준다(2026-08-15 실측).
+                        페이지 루프를 돌리면 같은 응답을 최대 4번 받으려고 호출만 4배가 된다.""")
+                .hasSize(9);
     }
 }

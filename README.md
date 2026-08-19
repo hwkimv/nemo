@@ -23,7 +23,8 @@
 | 앨범 목록 DB 페이지네이션 | 앨범 5,000개에서 **74ms → 8ms**, 앨범 수와 무관하게 고정 | [CS 04](docs/case-studies/04-query-performance.md) |
 | 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
-| 지도 중복 검색어 제거 | 뷰포트 1회 외부 호출 **41 → 37회**, 응답 **7,954 → 7,139ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
+| 지도 외부 호출 감축 (실제 API) | 뷰포트 1회 **25 → 10회**, 응답 **4,770 → 1,857ms** (결과 동일) | [CS 05](docs/case-studies/05-map-api-cache.md) |
+| 지도 API HUB 이관 대응 | 지역 검색 401 → 200. 구 경로가 NCP 키를 못 받는 것을 실측으로 확인 | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
 | CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
 | Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
@@ -147,7 +148,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 02 | [Supabase PostgreSQL 전환 후 런타임 하드닝](docs/case-studies/02-postgres-runtime-hardening.md) | 프로필 분리, 운영 smoke test, 개발용 표면 차단 |
 | 03 | [인증·권한 경계의 구멍 4개 막기](docs/case-studies/03-security-boundaries.md) | 타인 사진 접근 차단, 토큰 로그 제거. 회귀 테스트 17개 |
 | 04 | [앨범 목록 N+1 제거와 측정](docs/case-studies/04-query-performance.md) | **DB 쿼리 202 → 4, 응답 99ms → 11ms** |
-| 05 | [지도 API 캐시가 가리고 있던 것](docs/case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 측정하다 캐시가 가린 버그 발견 |
+| 05 | [지도 API 캐시가 가리고 있던 것](docs/case-studies/05-map-api-cache.md) | 외부 호출 820 → 0회. 실제 API로 재측정해 뷰포트 25 → 10회 |
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 돌려보며 드러난 결함 5건 |
 | 08 | [Sentry를 붙였는데 이벤트가 0건이었다](docs/case-studies/08-sentry.md) | 전역 핸들러가 삼키던 예외. 정상 상황이 500이던 문제 |
@@ -240,7 +241,7 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **조회 성능만 측정했습니다.** 앨범·타임라인·사진 조회는 Before/After가 있지만, 업로드·QR 경로는 측정하지 않았습니다.
 - **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
 - **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
-- **지도 뷰포트 1회 요청이 외부 API를 37번 부릅니다.** (중복 제거로 41 → 37) 캐시가 반복은 막아주지만 첫 요청은 여전히 7초입니다. 호출 수 자체를 줄이는 것이 다음 과제입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
+- **지도 뷰포트 1회 요청이 외부 API를 10번 부릅니다.** (실측 25 → 10) 캐시가 반복은 막아주지만 첫 요청은 여전히 1.9초입니다. 남은 9회가 키워드 검색이라, 키워드 9개가 다 필요한지를 여러 지역에서 반복 측정한 뒤 줄일 계획입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
 - **지도 캐시에 크기 상한이 없습니다.** Reverse Geocode 키가 좌표 그 자체라 지도를 움직이는 만큼 항목이 늘어납니다. (이 캐시는 `ConcurrentHashMap` + TTL 2분이며 Caffeine이나 Redis가 아닙니다)
 - **사진 업로드·QR·친구 경로에는 아직 테스트가 없습니다.** 인증·앨범·타임라인 경로만 덮여 있습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
