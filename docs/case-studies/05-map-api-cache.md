@@ -197,12 +197,57 @@ TTL 2분 동안 옛 응답을 돌려줍니다. 폐업한 매장이 최대 2분�
 
 ---
 
+## 후속 조치 — 중복 키워드 제거 (2026-08-15)
+
+측정으로 드러난 중복을 실제로 제거했습니다.
+
+```java
+// 전: KEYWORDS[0]이 "포토부스"인데 보조 키워드로 "지역명 + 포토부스"를 또 넣었다
+List<String> searchKeywords = new ArrayList<>();
+for (String base : KEYWORDS) searchKeywords.add(regionName + " " + base);
+searchKeywords.add(regionName + " 포토부스");        // ← 중복
+
+// 후: 집합으로 받아 중복이 구조적으로 불가능하게
+Set<String> keywordSet = new LinkedHashSet<>();      // 순서는 유지
+```
+
+`distinct()` 한 번이 아니라 **집합으로 받은 이유**는, 앞으로 키워드를 추가하다
+겹쳐도 자동으로 걸러지게 하기 위함입니다. `/search` 경로의 같은 중복
+(`BRANDS[0]`도 `"포토부스"`)도 함께 고쳤습니다.
+
+### 측정 (같은 세션·같은 스텁, 캐시 OFF, 각 3회)
+
+| 항목 | Before | After | 변화 |
+|---|---:|---:|---|
+| 뷰포트 1회 외부 API 호출 | **41회** | **37회** | **-9.8%** |
+| 사용된 검색어 수 | 10개 | **9개** | 중복 1개 제거 |
+| 응답시간 평균 | 7,954ms | **7,139ms** | **-815ms (-10.2%)** |
+
+응답시간 감소가 호출 감소와 거의 정확히 비례합니다 — `4회 × 200ms = 800ms`.
+**레이트 리미터가 병목이라는 진단이 여기서 다시 확인됩니다.**
+
+> `/search` 경로는 호출 수가 5회로 그대로였습니다.
+> `raw.size() >= max * 2`에서 조기 종료가 걸려 중복이 호출 수에 드러나지 않기 때문입니다.
+> 그래도 고친 이유는, 조기 종료 조건이 바뀌면 그때 중복이 살아나기 때문입니다.
+
+`PhotoboothKeywordDedupTest`로 고정했습니다. 수정 전 코드로 돌리면
+**40회를 기록하며 실패**합니다.
+
+### 남은 것은 여전히 크다
+
+37회도 많습니다. 진짜 감축은 **키워드·페이지 수를 줄이는 것**인데,
+실제 네이버 응답에서 페이지 2~4가 뷰포트 안 결과를 얼마나 더 주는지 측정해야
+근거를 갖고 자를 수 있습니다. 스텁으로는 판단할 수 없습니다.
+
+---
+
 ## Evidence
 
 | 항목 | 위치 |
 |---|---|
 | 측정 원자료 | [`docs/evidence/2026-08-14-map-cache.md`](../evidence/2026-08-14-map-cache.md) |
-| 캐시 동작 테스트 | `backend/src/test/java/com/nemo/backend/domain/map/util/NaverApiCacheTest.java` |
+| 캐시 동작 테스트 | `NaverApiCacheTest` (5) |
+| 중복 제거 회귀 테스트 | `PhotoboothKeywordDedupTest` |
 | 측정용 스텁 | `tools/performance/naver-stub/stub.py` |
 
 ```bash

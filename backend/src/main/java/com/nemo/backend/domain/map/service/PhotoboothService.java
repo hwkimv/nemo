@@ -174,7 +174,9 @@ public class PhotoboothService {
         // 2) 실제 네이버에 던질 검색 키워드 조합
         //    - 브랜드명이 포함된 검색어인지 먼저 판단
         // ────────────────────────────────────────
-        List<String> searchKeywords = new ArrayList<>();
+        // viewport 경로와 같은 이유로 중복을 제거한다.
+        // BRANDS[0]도 "포토부스"라, 아래에서 base + " 포토부스"를 더하면 같은 검색어가 두 번 생긴다.
+        Set<String> searchKeywords = new LinkedHashSet<>();
 
         boolean containsBrand = !Objects.equals(guessBrand(trimmed), "기타");
 
@@ -357,18 +359,29 @@ public class PhotoboothService {
         //    ▷ 위치 기반 정확한 검색을 위해 "지역명 + 키워드" 형태 선호
         //      예: "강남구 역삼동 인생네컷"
         // ────────────────────────────────────────
-        List<String> searchKeywords = new ArrayList<>();
+        // ⚠️ 중복 제거가 핵심이다.
+        // 예전에는 KEYWORDS를 돌린 뒤 "지역명 + 포토부스"를 하나 더 넣었는데,
+        // KEYWORDS[0]이 이미 "포토부스"라 같은 검색어가 두 번 만들어졌다.
+        // 키워드 하나당 최대 4페이지를 부르므로 그 중복만으로 외부 호출 4회가 낭비된다.
+        //
+        // 캐시가 켜져 있으면 두 번째는 전부 hit이라 아무도 눈치채지 못했다.
+        // 캐시를 끄고 호출 수를 세어보니 드러났다.
+        //
+        // LinkedHashSet을 쓰면 지금의 중복도 사라지고, 앞으로 키워드를 추가하다
+        // 겹쳐도 자동으로 걸러진다. 순서는 유지된다.
+        Set<String> keywordSet = new LinkedHashSet<>();
 
         if (regionName != null && !regionName.isBlank()) {
             for (String base : KEYWORDS) {
-                searchKeywords.add(regionName + " " + base);
+                keywordSet.add(regionName + " " + base);
             }
-            // 보조 키워드 하나 더
-            searchKeywords.add(regionName + " 포토부스");
+            keywordSet.add(regionName + " 포토부스");
         } else {
             // 역지오코딩 실패 시 → 전국 검색 fallback
-            searchKeywords.addAll(KEYWORDS);
+            keywordSet.addAll(KEYWORDS);
         }
+
+        List<String> searchKeywords = new ArrayList<>(keywordSet);
 
         // ⭐ 로그(2) — 사용된 검색 키워드 목록 출력
         log.info("[MAP][KEYWORDS] {}", searchKeywords);

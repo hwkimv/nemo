@@ -23,11 +23,12 @@
 | 앨범 목록 DB 페이지네이션 | 앨범 5,000개에서 **74ms → 8ms**, 앨범 수와 무관하게 고정 | [CS 04](docs/case-studies/04-query-performance.md) |
 | 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
+| 지도 중복 검색어 제거 | 뷰포트 1회 외부 호출 **41 → 37회**, 응답 **7,954 → 7,139ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
 | CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
 | Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
 | 동시성 검증 | 동시 업로드가 저장 한도를 넘던 문제 (**26장 → 20장**) | [CS 09](docs/case-studies/09-concurrency.md) |
-| 인증 경로 테스트 | 전체 **109개** (인증 37 + 보안 17 + 조회 20 + 캐시 5 + 스크러빙 13 + 동시성 2 + 기타 15) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
+| 인증 경로 테스트 | 전체 **110개** (인증 37 + 보안 17 + 조회 20 + 캐시 6 + 스크러빙 13 + 동시성 2 + 기타 15) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 
 **측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
@@ -221,7 +222,7 @@ Grafana `http://localhost:3000` (admin / admin) → NEMO 폴더. 앱은 호스�
 cd backend && ./gradlew test
 ```
 
-**109 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**110 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 
@@ -239,7 +240,7 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **조회 성능만 측정했습니다.** 앨범·타임라인·사진 조회는 Before/After가 있지만, 업로드·QR 경로는 측정하지 않았습니다.
 - **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
 - **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
-- **지도 뷰포트 1회 요청이 외부 API를 41번 부릅니다.** 캐시가 반복은 막아주지만 첫 요청은 여전히 7초입니다. 호출 수 자체를 줄이는 것이 다음 과제입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
+- **지도 뷰포트 1회 요청이 외부 API를 37번 부릅니다.** (중복 제거로 41 → 37) 캐시가 반복은 막아주지만 첫 요청은 여전히 7초입니다. 호출 수 자체를 줄이는 것이 다음 과제입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
 - **지도 캐시에 크기 상한이 없습니다.** Reverse Geocode 키가 좌표 그 자체라 지도를 움직이는 만큼 항목이 늘어납니다. (이 캐시는 `ConcurrentHashMap` + TTL 2분이며 Caffeine이나 Redis가 아닙니다)
 - **사진 업로드·QR·친구 경로에는 아직 테스트가 없습니다.** 인증·앨범·타임라인 경로만 덮여 있습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
