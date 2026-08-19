@@ -130,6 +130,7 @@ logging:
 naver:
   openapi:
     local:
-      endpoint: https://openapi.naver.com/v1/search/local.json
+      # NAVER API HUB 이관 후 경로. 구 경로는 NCP 발급 키를 받지 않는다(401).
+      endpoint: https://naverapihub.apigw.ntruss.com/search/v1/local
     reverse:
       endpoint: https://maps.apigw.ntruss.com/map-reversegeocode/v2/gc

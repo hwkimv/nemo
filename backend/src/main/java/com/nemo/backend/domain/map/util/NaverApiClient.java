@@ -29,7 +29,11 @@ public class NaverApiClient {
     // (1) Naver Local Search 설정
     //    - "포토부스", "인생네컷" 같은 키워드로 장소 검색할 때 사용
     // ───────────────────────────────────────────────────────────────
-    @Value("${naver.openapi.local.endpoint:https://openapi.naver.com/v1/search/local.json}")
+    // ⚠️ 2026년 네이버 검색 API가 NAVER API HUB로 이관됐다.
+    //    구 경로(openapi.naver.com/v1/search/local.json)는 NCP에서 새로 발급한 키를 받지 않는다.
+    //    실제로 확인: 구 경로 + X-Naver-Client-* → 401 "NID AUTH Result Invalid"
+    //                 HUB 경로 + X-NCP-APIGW-*   → 200
+    @Value("${naver.openapi.local.endpoint:https://naverapihub.apigw.ntruss.com/search/v1/local}")
     private String endpoint;
 
     @Value("${NAVER_LOCAL_CLIENT_ID}")
@@ -120,8 +124,9 @@ public class NaverApiClient {
 
         // 3) 헤더 (네이버 개발자 센터 방식)
         HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Naver-Client-Id", clientId);
-        headers.set("X-Naver-Client-Secret", clientSecret);
+        // API HUB는 NCP API Gateway 인증을 쓴다. 구 X-Naver-Client-* 헤더는 401이 된다.
+        headers.set("X-NCP-APIGW-API-KEY-ID", clientId);
+        headers.set("X-NCP-APIGW-API-KEY", clientSecret);
 
         // 4) 레이트 리밋: 외부로 너무 자주 나가지 않도록 최소 간격 보장
         enforceMinInterval();
