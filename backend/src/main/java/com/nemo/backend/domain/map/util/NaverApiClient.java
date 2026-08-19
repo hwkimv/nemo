@@ -3,9 +3,8 @@ package com.nemo.backend.domain.map.util;
 
 import com.github.benmanes.caffeine.cache.Ticker;
 import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
@@ -23,7 +22,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class NaverApiClient {
 
     // ───────────────────────────────────────────────────────────────
@@ -59,72 +57,72 @@ public class NaverApiClient {
 
     private final RestTemplate restTemplate;
 
-    /** 캐시 지표를 Prometheus로 내보내기 위한 레지스트리 */
-    private final MeterRegistry meterRegistry;
-
     // ───────────────────────────────────────────────────────────────
     // (A) 응답 캐시 — 용도별로 2개를 따로 둔다
     //
-    //     예전에는 Local Search와 Reverse Geocoding이 ConcurrentHashMap 하나를
-    //     TTL 120초로 같이 썼다. 두 데이터는 바뀌는 속도가 전혀 다르다.
+    //     예전에는 Local Search와 Reverse Geocoding이 캐시 하나를 TTL 120초로 같이 썼다.
+    //     두 데이터는 바뀌는 속도가 전혀 다르다.
     //       · 업체 검색 결과   : 폐업·신규 오픈으로 바뀔 수 있다        → 짧게
     //       · 좌표 → 행정구역 : 행정구역 개편이 아니면 안 바뀐다        → 길게
-    //     하나의 TTL로는 한쪽에 맞추면 다른 쪽이 손해였다. 그래서 분리했다.
+    //     하나의 TTL로는 한쪽에 맞추면 다른 쪽이 손해였고, 통계가 하나로 합쳐져
+    //     어느 쪽이 외부 호출 비용을 쓰는지 구분조차 되지 않았다.
     //
     //     key는 예전과 같다: 완성된 요청 URI 문자열.
     //     같은 URI면 같은 응답이라는 전제는 그대로다. 바뀐 것은 "어디에 얼마나 담느냐"뿐이다.
     // ───────────────────────────────────────────────────────────────
 
-    /**
-     * Local Search 캐시 유효시간(초). 기본 5분.
-     *
-     * <p>구 환경변수 NAVER_CACHE_TTL_SECONDS 호환은 application.yml이 맡는다.
-     * 여기 기본값은 yml이 없는 단위 테스트에서만 쓰인다.
-     */
-    @Value("${naver.cache.local-search.ttl-seconds:300}")
-    private long localSearchCacheTtlSeconds;
-
-    @Value("${naver.cache.local-search.maximum-size:1000}")
-    private long localSearchCacheMaximumSize;
+    private final NaverResponseCache localSearchCache;
+    private final NaverResponseCache reverseGeocodeCache;
 
     /**
-     * Reverse Geocoding 캐시 유효시간(초). 기본 30분.
-     *
-     * <p>Local Search보다 6배 길다. 같은 좌표의 주소는 훨씬 덜 바뀌기 때문이다.
-     * 다만 "안 바뀐다"가 아니라 "덜 바뀐다"이므로 무기한 캐시는 쓰지 않는다.
+     * @param localSearchTtlSeconds     업체 검색 결과 캐시 유효시간. 기본 5분.
+     *                                  0이면 이 캐시만 꺼진다.
+     * @param reverseGeocodeTtlSeconds  좌표 → 행정구역 캐시 유효시간. 기본 30분.
+     *                                  Local Search보다 6배 긴 이유는 주소가 훨씬 덜 바뀌기 때문이다.
+     *                                  다만 "안 바뀐다"가 아니라 "덜 바뀐다"이므로 무기한은 쓰지 않는다.
+     * @param meterRegistry             캐시 지표를 Prometheus로 내보내기 위한 레지스트리
      */
-    @Value("${naver.cache.reverse-geocoding.ttl-seconds:1800}")
-    private long reverseGeocodeCacheTtlSeconds;
-
-    @Value("${naver.cache.reverse-geocoding.maximum-size:1000}")
-    private long reverseGeocodeCacheMaximumSize;
-
-    /** 테스트에서 가짜 시계를 끼워 TTL 만료를 기다리지 않고 재현하기 위한 자리 */
-    private Ticker ticker = Ticker.systemTicker();
-
-    private NaverResponseCache localSearchCache;
-    private NaverResponseCache reverseGeocodeCache;
+    @Autowired
+    public NaverApiClient(
+            RestTemplate restTemplate,
+            @Value("${naver.cache.local-search.ttl-seconds:300}") long localSearchTtlSeconds,
+            @Value("${naver.cache.local-search.maximum-size:1000}") long localSearchMaximumSize,
+            @Value("${naver.cache.reverse-geocoding.ttl-seconds:1800}") long reverseGeocodeTtlSeconds,
+            @Value("${naver.cache.reverse-geocoding.maximum-size:1000}") long reverseGeocodeMaximumSize,
+            MeterRegistry meterRegistry
+    ) {
+        this(restTemplate, localSearchTtlSeconds, localSearchMaximumSize,
+                reverseGeocodeTtlSeconds, reverseGeocodeMaximumSize,
+                meterRegistry, Ticker.systemTicker());
+    }
 
     /**
-     * @Value 주입이 끝난 뒤 캐시를 만든다.
+     * 시계를 직접 넘기는 생성자.
      *
-     * 생성자에서 만들 수 없다. 그 시점에는 TTL·maximumSize가 아직 0이다.
+     * 테스트에서 가짜 시계를 끼워 TTL 만료를 실제로 기다리지 않고 재현하는 데 쓴다.
+     * 5분·30분을 진짜로 기다릴 수는 없다.
      */
-    @PostConstruct
-    public void initCaches() {
-        localSearchCache = new NaverResponseCache(
-                "local-search", localSearchCacheTtlSeconds, localSearchCacheMaximumSize, ticker);
-        reverseGeocodeCache = new NaverResponseCache(
-                "reverse-geocoding", reverseGeocodeCacheTtlSeconds, reverseGeocodeCacheMaximumSize, ticker);
+    public NaverApiClient(
+            RestTemplate restTemplate,
+            long localSearchTtlSeconds,
+            long localSearchMaximumSize,
+            long reverseGeocodeTtlSeconds,
+            long reverseGeocodeMaximumSize,
+            MeterRegistry meterRegistry,
+            Ticker ticker
+    ) {
+        this.restTemplate = restTemplate;
+        this.localSearchCache = new NaverResponseCache(
+                "local-search", localSearchTtlSeconds, localSearchMaximumSize, ticker);
+        this.reverseGeocodeCache = new NaverResponseCache(
+                "reverse-geocoding", reverseGeocodeTtlSeconds, reverseGeocodeMaximumSize, ticker);
 
-        // Prometheus로 내보내 Grafana에서 hit ratio·eviction·size를 본다.
+        // Prometheus로 내보내 Grafana에서 적중률·축출·크기를 본다.
         localSearchCache.bindTo(meterRegistry);
         reverseGeocodeCache.bindTo(meterRegistry);
 
         log.info("[NAVER][CACHE] {} | {}", localSearchCache.describe(), reverseGeocodeCache.describe());
     }
-
-    // ───────────────────────────────────────────────────────────────
 
     // ───────────────────────────────────────────────────────────────
     // (B) 아주 단순한 레이트 리미터: 외부 호출 사이 최소 간격 200ms 확보(초당 최대 5회)

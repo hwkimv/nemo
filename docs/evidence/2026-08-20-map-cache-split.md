@@ -12,28 +12,31 @@
 
 ---
 
-## 1. Before — 하나의 캐시, 하나의 TTL
+## 1. Before — Caffeine 캐시 **하나**
+
+바로 앞 작업([2026-08-19 Caffeine 로컬 캐시 교체](2026-08-19-caffeine-local-cache.md))에서
+직접 구현하던 `ConcurrentHashMap` 캐시를 Caffeine으로 갈아탔습니다.
+그 결과 크기 상한과 통계는 생겼지만, **캐시는 여전히 하나**였습니다.
 
 ```java
-// 예전 구조
-private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+// 이번 작업 직전 상태
+private final Cache<String, Map<String, Object>> cache;   // 하나
 
-@Value("${naver.cache.ttl-seconds:120}")
-private long cacheTtlSeconds;
+@Value("${naver.cache.ttl-seconds:120}")   long cacheTtlSeconds;
+@Value("${naver.cache.maximum-size:1000}") long cacheMaximumSize;
 ```
 
 | | Before |
 |---|---|
-| 구현 | `ConcurrentHashMap` + 저장 시각 수동 비교 |
-| 담기는 것 | Local Search 응답 **과** Reverse Geocoding 응답 (같은 Map) |
+| 구현 | Caffeine (`expireAfterWrite` + `maximumSize` + `recordStats`) |
+| 담기는 것 | Local Search 응답 **과** Reverse Geocoding 응답 (**같은 캐시**) |
 | TTL | 둘 다 **120초** |
-| 크기 상한 | **없음** |
-| 만료 정리 | **읽을 때만.** 다시 읽히지 않는 항목은 계속 남음 |
-| 통계 | 없음 (hit/miss를 셀 수 없음) |
+| 크기 상한 | 1000 entry (공용) |
+| 통계 | 있지만 **둘이 합쳐진 하나의 값** |
 
-> Caffeine은 `build.gradle`에 선언만 되어 있고 실제로는 쓰이지 않았습니다.
+메모리 문제는 해결됐습니다. **남은 문제는 정책과 관측이었습니다.**
 
-## 2. 문제 — 두 데이터의 변경 특성이 다른데 TTL이 같았다
+## 2. 문제 — 두 데이터의 변경 특성이 다른데 정책이 하나였다
 
 | | Local Search | Reverse Geocoding |
 |---|---|---|
@@ -44,13 +47,15 @@ private long cacheTtlSeconds;
 
 하나의 TTL로는 **한쪽에 맞추면 다른 쪽이 손해**입니다.
 120초는 업체 정보 기준으로는 짧을 것도 없지만, 좌표→주소 변환에는 지나치게 짧습니다.
-게다가 통계가 없어 **어느 쪽이 비용을 쓰는지 구분조차 되지 않았습니다.**
+
+그리고 `recordStats()`가 켜져 있어도 **통계가 하나로 합쳐져** 나옵니다.
+적중률이 85%라고 해도 그게 어느 쪽 덕분인지, 어느 쪽이 발목을 잡는지 알 수 없습니다.
+**정책을 조정하려면 먼저 구분이 돼야 합니다.**
 
 ## 3. After — 용도별 캐시 2개
 
 | | local-search | reverse-geocoding |
 |---|---|---|
-| 구현 | Caffeine | Caffeine |
 | key | Local Search 요청 URI **(변경 없음)** | Reverse Geocode 요청 URI **(변경 없음)** |
 | 만료 | `expireAfterWrite` **300초 (5분)** | `expireAfterWrite` **1800초 (30분)** |
 | 크기 상한 | `maximumSize` 1000 entry | `maximumSize` 1000 entry |

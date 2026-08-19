@@ -82,7 +82,7 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform {
-		excludeTags 'performance'
+		excludeTags 'performance', 'map-cache-performance'
 	}
 }
 
@@ -91,6 +91,19 @@ tasks.register('performanceBaseline', Test) {
 	group = 'verification'
 	useJUnitPlatform {
 		includeTags 'performance'
+	}
+	testLogging {
+		events 'passed', 'failed'
+		showStandardStreams = true
+	}
+	shouldRunAfter tasks.named('test')
+}
+
+tasks.register('mapCacheMeasurement', Test) {
+	description = 'Compares Naver map cache OFF and ON with a local stub server.'
+	group = 'verification'
+	useJUnitPlatform {
+		includeTags 'map-cache-performance'
 	}
 	testLogging {
 		events 'passed', 'failed'

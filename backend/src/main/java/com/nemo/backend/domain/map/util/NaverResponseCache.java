@@ -58,15 +58,31 @@ public class NaverResponseCache {
      *               실제로 기다리지 않고 재현하기 위해 열어 둔다.
      */
     public NaverResponseCache(String name, long ttlSeconds, long maximumSize, Ticker ticker) {
+        // 잘못된 설정은 조용히 넘어가면 안 된다.
+        // TTL을 음수로 주면 "끈 것"인지 "실수"인지 구분되지 않고,
+        // maximumSize 0은 넣는 족족 버려지는 캐시가 되어 캐시가 있는데 항상 miss가 난다.
+        if (ttlSeconds < 0) {
+            throw new IllegalArgumentException(
+                    "%s 캐시의 ttl-seconds는 0 이상이어야 합니다. (0이면 캐시 OFF)".formatted(name));
+        }
+        if (maximumSize <= 0) {
+            throw new IllegalArgumentException(
+                    "%s 캐시의 maximum-size는 1 이상이어야 합니다.".formatted(name));
+        }
+
         this.name = name;
         this.ttlSeconds = ttlSeconds;
         this.maximumSize = maximumSize;
-        this.delegate = (ttlSeconds <= 0)
+        this.delegate = (ttlSeconds == 0)
                 ? null
                 : Caffeine.newBuilder()
                         .expireAfterWrite(Duration.ofSeconds(ttlSeconds))
                         .maximumSize(maximumSize)
-                        .ticker(ticker)
+                        // 축출·만료를 호출한 스레드에서 바로 처리한다.
+                        // 기본값(ForkJoinPool)이면 축출이 비동기라 통계를 읽는 시점에
+                        // 아직 반영되지 않을 수 있다. 테스트와 측정이 흔들리지 않게 고정한다.
+                        .executor(Runnable::run)
+                        .ticker(Objects.requireNonNull(ticker, "ticker"))
                         .recordStats()
                         .build();
     }

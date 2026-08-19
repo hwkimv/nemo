@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -432,13 +433,33 @@ class NaverApiCacheTest {
         }
     }
 
+    @Nested
+    @DisplayName("잘못된 설정은 시작할 때 막는다")
+    class InvalidConfiguration {
+
+        @Test
+        @DisplayName("TTL이 음수면 뜨지 않는다 — 0(OFF)과 실수를 구분해야 한다")
+        void negativeTtlIsRejected() {
+            assertThatThrownBy(() -> newClient(-1, DEFAULT_MAX_SIZE, DEFAULT_REVERSE_TTL, DEFAULT_MAX_SIZE))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("local-search");
+        }
+
+        @Test
+        @DisplayName("maximumSize가 0이면 뜨지 않는다 — 넣는 족족 버려져 항상 miss가 된다")
+        void zeroMaximumSizeIsRejected() {
+            assertThatThrownBy(() -> newClient(DEFAULT_LOCAL_TTL, DEFAULT_MAX_SIZE, DEFAULT_REVERSE_TTL, 0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("reverse-geocoding");
+        }
+    }
+
     // ─────────────────────────── 도우미 ───────────────────────────
 
     /**
      * 테스트용 클라이언트를 새로 만든다.
      *
-     * 캐시는 @Value 주입 뒤에 만들어지므로, 필드를 세팅한 다음 initCaches()를 직접 부른다.
-     * 스프링 컨테이너에서는 @PostConstruct가 같은 일을 한다.
+     * 캐시 설정은 생성자로 넘긴다. 운영에서는 스프링이 @Value로 같은 자리를 채운다.
      */
     private void newClient(long localTtl, long localMax, long reverseTtl, long reverseMax) {
         localCalls = new AtomicInteger();
@@ -458,19 +479,15 @@ class NaverApiCacheTest {
                     return ResponseEntity.ok(localBody());
                 });
 
-        client = new NaverApiClient(restTemplate, meterRegistry);
+        client = new NaverApiClient(restTemplate,
+                localTtl, localMax, reverseTtl, reverseMax, meterRegistry, ticker);
+        // 엔드포인트·키는 @Value 필드라 생성자로 넘길 수 없다. 테스트에서만 직접 채운다.
         ReflectionTestUtils.setField(client, "endpoint", "https://naver.test/search/v1/local");
         ReflectionTestUtils.setField(client, "clientId", "test-id");
         ReflectionTestUtils.setField(client, "clientSecret", "test-secret");
         ReflectionTestUtils.setField(client, "reverseEndpoint", "https://naver.test/map-reversegeocode/v2/gc");
         ReflectionTestUtils.setField(client, "mapClientId", "test-map-id");
         ReflectionTestUtils.setField(client, "mapClientSecret", "test-map-secret");
-        ReflectionTestUtils.setField(client, "localSearchCacheTtlSeconds", localTtl);
-        ReflectionTestUtils.setField(client, "localSearchCacheMaximumSize", localMax);
-        ReflectionTestUtils.setField(client, "reverseGeocodeCacheTtlSeconds", reverseTtl);
-        ReflectionTestUtils.setField(client, "reverseGeocodeCacheMaximumSize", reverseMax);
-        ReflectionTestUtils.setField(client, "ticker", ticker);
-        client.initCaches();
     }
 
     private static Map<String, Object> localBody() {

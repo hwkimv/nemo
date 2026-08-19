@@ -2,6 +2,7 @@ package com.nemo.backend.domain.map.service;
 
 import com.nemo.backend.domain.map.dto.PhotoboothDto;
 import com.nemo.backend.domain.map.dto.ViewportRequest;
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.nemo.backend.domain.map.util.NaverApiClient;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -46,6 +47,7 @@ class PhotoboothCacheRegressionTest {
 
     private PhotoboothService service;
     private NaverApiClient client;
+    private RestTemplate restTemplate;
     private AtomicInteger localCalls;
     private AtomicInteger reverseCalls;
 
@@ -55,7 +57,7 @@ class PhotoboothCacheRegressionTest {
         reverseCalls = new AtomicInteger();
         MeterRegistry registry = new SimpleMeterRegistry();
 
-        RestTemplate restTemplate = mock(RestTemplate.class);
+        restTemplate = mock(RestTemplate.class);
         when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
                 .thenAnswer(invocation -> {
                     URI uri = invocation.getArgument(0);
@@ -67,19 +69,8 @@ class PhotoboothCacheRegressionTest {
                     return ResponseEntity.ok(localBody());
                 });
 
-        client = new NaverApiClient(restTemplate, registry);
-        ReflectionTestUtils.setField(client, "endpoint", "https://naver.test/search/v1/local");
-        ReflectionTestUtils.setField(client, "clientId", "test-id");
-        ReflectionTestUtils.setField(client, "clientSecret", "test-secret");
-        ReflectionTestUtils.setField(client, "reverseEndpoint", "https://naver.test/map-reversegeocode/v2/gc");
-        ReflectionTestUtils.setField(client, "mapClientId", "test-map-id");
-        ReflectionTestUtils.setField(client, "mapClientSecret", "test-map-secret");
-        ReflectionTestUtils.setField(client, "localSearchCacheTtlSeconds", 300L);
-        ReflectionTestUtils.setField(client, "localSearchCacheMaximumSize", 1000L);
-        ReflectionTestUtils.setField(client, "reverseGeocodeCacheTtlSeconds", 1800L);
-        ReflectionTestUtils.setField(client, "reverseGeocodeCacheMaximumSize", 1000L);
-        client.initCaches();
-
+        client = new NaverApiClient(restTemplate, 300L, 1000L, 1800L, 1000L, registry, Ticker.systemTicker());
+        applyEndpoints(client);
         service = new PhotoboothService(client);
     }
 
@@ -127,9 +118,11 @@ class PhotoboothCacheRegressionTest {
     void resultUnchangedWhenLocalCacheOff() {
         List<PhotoboothDto> withCache = service.getPhotoboothsInViewport(viewport());
 
-        // Local Search 캐시만 끄고 다시 만든다
-        ReflectionTestUtils.setField(client, "localSearchCacheTtlSeconds", 0L);
-        client.initCaches();
+        // Local Search 캐시만 끄고 클라이언트를 다시 만든다
+        client = new NaverApiClient(restTemplate, 0L, 1000L, 1800L, 1000L,
+                new SimpleMeterRegistry(), Ticker.systemTicker());
+        applyEndpoints(client);
+        service = new PhotoboothService(client);
         localCalls.set(0);
         reverseCalls.set(0);
 
@@ -147,6 +140,16 @@ class PhotoboothCacheRegressionTest {
         assertThat(reverseCalls.get())
                 .as("Reverse Geocoding은 두 번 조회해도 외부 호출 1번")
                 .isEqualTo(1);
+    }
+
+    /** 엔드포인트·키는 @Value 필드라 생성자로 넘길 수 없다. 테스트에서만 직접 채운다. */
+    private static void applyEndpoints(NaverApiClient client) {
+        ReflectionTestUtils.setField(client, "endpoint", "https://naver.test/search/v1/local");
+        ReflectionTestUtils.setField(client, "clientId", "test-id");
+        ReflectionTestUtils.setField(client, "clientSecret", "test-secret");
+        ReflectionTestUtils.setField(client, "reverseEndpoint", "https://naver.test/map-reversegeocode/v2/gc");
+        ReflectionTestUtils.setField(client, "mapClientId", "test-map-id");
+        ReflectionTestUtils.setField(client, "mapClientSecret", "test-map-secret");
     }
 
     /** placeId(임의 UUID)를 뺀 비교용 표현 */
