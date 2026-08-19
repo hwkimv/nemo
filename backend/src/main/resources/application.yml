@@ -128,6 +128,9 @@ logging:
     level: "%5p [%X{requestId:-no-req-id}]"
 
 naver:
+  cache:
+    ttl-seconds: ${NAVER_CACHE_TTL_SECONDS:120}
+    maximum-size: ${NAVER_CACHE_MAXIMUM_SIZE:1000}
   openapi:
     local:
       # NAVER API HUB 이관 후 경로. 구 경로는 NCP 발급 키를 받지 않는다(401).

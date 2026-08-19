@@ -1,8 +1,12 @@
 // src/main/java/com/nemo/backend/domain/map/util/NaverApiClient.java
 package com.nemo.backend.domain.map.util;
 
-import lombok.RequiredArgsConstructor;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
@@ -17,12 +21,10 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class NaverApiClient {
 
     // ───────────────────────────────────────────────────────────────
@@ -57,25 +59,44 @@ public class NaverApiClient {
     private String mapClientSecret;
 
     private final RestTemplate restTemplate;
+    private final Cache<String, Map<String, Object>> cache;
+    private final boolean cacheEnabled;
 
-    // ───────────────────────────────────────────────────────────────
-    // (A) 간단 캐시: 같은 요청(같은 URI)은 2분간 재사용
-    //     - Local Search / Reverse Geocode 둘 다 공통으로 사용
-    //     - key: 완성된 URI 문자열, value: 캐시 항목(응답+저장시각)
-    // ───────────────────────────────────────────────────────────────
-    /**
-     * 캐시 유효시간(초). 기본 2분.
-     *
-     * 0으로 두면 캐시를 끈다. 캐시 효과를 측정할 때 같은 빌드로 ON/OFF를 비교하기 위해,
-     * 그리고 외부 응답이 이상할 때 운영에서 즉시 우회하기 위해 설정으로 뺐다.
-     */
-    @Value("${naver.cache.ttl-seconds:120}")
-    private long cacheTtlSeconds = Duration.ofMinutes(2).toSeconds();
+    @Autowired
+    public NaverApiClient(
+            RestTemplate restTemplate,
+            @Value("${naver.cache.ttl-seconds:120}") long cacheTtlSeconds,
+            @Value("${naver.cache.maximum-size:1000}") long cacheMaximumSize
+    ) {
+        this(restTemplate, cacheTtlSeconds, cacheMaximumSize, Ticker.systemTicker());
+    }
 
-    private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    NaverApiClient(
+            RestTemplate restTemplate,
+            long cacheTtlSeconds,
+            long cacheMaximumSize,
+            Ticker ticker
+    ) {
+        if (cacheTtlSeconds < 0) {
+            throw new IllegalArgumentException("naver.cache.ttl-seconds는 0 이상이어야 합니다.");
+        }
+        if (cacheMaximumSize <= 0) {
+            throw new IllegalArgumentException("naver.cache.maximum-size는 1 이상이어야 합니다.");
+        }
 
-    private record CacheEntry(Map<String, Object> body, long savedAtMs) {}
-    // ───────────────────────────────────────────────────────────────
+        this.restTemplate = restTemplate;
+        this.cacheEnabled = cacheTtlSeconds > 0;
+
+        Caffeine<Object, Object> cacheBuilder = Caffeine.newBuilder()
+                .maximumSize(cacheMaximumSize)
+                .recordStats()
+                .ticker(Objects.requireNonNull(ticker))
+                .executor(Runnable::run);
+        if (cacheEnabled) {
+            cacheBuilder.expireAfterWrite(Duration.ofSeconds(cacheTtlSeconds));
+        }
+        this.cache = cacheBuilder.build();
+    }
 
     // ───────────────────────────────────────────────────────────────
     // (B) 아주 단순한 레이트 리미터: 외부 호출 사이 최소 간격 200ms 확보(초당 최대 5회)
@@ -115,7 +136,7 @@ public class NaverApiClient {
 
         String cacheKey = uri.toString();
 
-        // 2) 캐시 확인 (2분 내면 재사용)
+        // 2) 캐시 확인 (설정된 TTL 안이면 재사용, TTL=0이면 비활성화)
         Map<String, Object> cached = loadFromCache(cacheKey);
         if (cached != null) {
             log.debug("[NAVER][CACHE-HIT][LOCAL] {}", cacheKey);
@@ -198,7 +219,7 @@ public class NaverApiClient {
 
         String cacheKey = uri.toString();
 
-        // 1) 캐시 확인 (2분 내면 재사용)
+        // 1) 캐시 확인 (설정된 TTL 안이면 재사용, TTL=0이면 비활성화)
         Map<String, Object> cached = loadFromCache(cacheKey);
         if (cached != null) {
             log.debug("[NAVER][CACHE-HIT][REVERSE] {}", cacheKey);
@@ -296,28 +317,30 @@ public class NaverApiClient {
     }
 
     private Map<String, Object> loadFromCache(String key) {
-        if (cacheTtlSeconds <= 0) return null; // 캐시 비활성
-        CacheEntry entry = cache.get(key);
-        if (entry == null) return null;
-        long age = System.currentTimeMillis() - entry.savedAtMs();
-        if (age <= cacheTtlSeconds * 1000L) return entry.body();
-        cache.remove(key); // 만료되면 정리
-        return null;
+        if (!cacheEnabled) return null;
+        return cache.getIfPresent(key);
     }
 
     private void saveToCache(String key, Map<String, Object> body) {
-        if (cacheTtlSeconds <= 0) return; // 캐시 비활성
-        cache.put(key, new CacheEntry(Objects.requireNonNullElse(body, Map.of()), System.currentTimeMillis()));
+        if (!cacheEnabled) return;
+        cache.put(key, Objects.requireNonNullElse(body, Map.of()));
     }
 
     /** 테스트·측정에서 캐시 상태를 초기화할 때 사용 */
     public void clearCache() {
-        cache.clear();
+        cache.invalidateAll();
+        cache.cleanUp();
     }
 
     /** 현재 캐시에 들어 있는 항목 수 (메모리 사용량 관찰용) */
-    public int cacheSize() {
-        return cache.size();
+    public long cacheSize() {
+        cache.cleanUp();
+        return cache.estimatedSize();
+    }
+
+    /** hit/miss/eviction 관측용 누적 통계 */
+    public CacheStats cacheStats() {
+        return cache.stats();
     }
 
     // 외부 호출 최소 간격 보장 (아주 단순한 방식)
