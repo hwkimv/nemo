@@ -15,6 +15,7 @@
 옵션
   --latency-ms N   외부 API의 네트워크 지연을 흉내낸다 (기본 0)
   --port N         (기본 9999)
+  --host ADDR      바인딩 주소 (기본 127.0.0.1, 컨테이너에서 띄울 때만 0.0.0.0)
 
 실행
   python3 tools/performance/naver-stub/stub.py --port 9999 --latency-ms 50
@@ -115,9 +116,12 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=9999)
+    # 기본은 127.0.0.1이다. 이 스텁은 측정용이라 밖으로 열 이유가 없다.
+    # 컨테이너 안에서 띄워 다른 컨테이너가 부를 때만 0.0.0.0으로 바꾼다.
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--latency-ms", type=int, default=0)
     args = parser.parse_args()
     LATENCY_MS = args.latency_ms
 
-    print(f"naver-stub listening on :{args.port} (latency {args.latency_ms}ms)", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+    print(f"naver-stub listening on {args.host}:{args.port} (latency {args.latency_ms}ms)", flush=True)
+    ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -83,10 +84,15 @@ class MapCacheMeasurementTest {
 
     private Measurement measure(String mode, long ttlSeconds) throws Exception {
         externalCalls.set(0);
+        // 이 측정은 지역 검색(Local Search)만 부른다.
+        // Reverse Geocoding 캐시는 관여하지 않으므로 기본값으로 둔다.
         NaverApiClient client = new NaverApiClient(
                 new RestTemplate(),
                 ttlSeconds,
-                CACHE_MAXIMUM_SIZE
+                CACHE_MAXIMUM_SIZE,
+                1800L,
+                CACHE_MAXIMUM_SIZE,
+                new SimpleMeterRegistry()
         );
         ReflectionTestUtils.setField(client, "endpoint", localEndpoint);
         ReflectionTestUtils.setField(client, "clientId", "stub-client-id");
@@ -112,9 +118,9 @@ class MapCacheMeasurementTest {
                 mode,
                 externalCalls.get(),
                 elapsedNanos / 1_000_000.0 / REQUESTS_PER_RUN,
-                client.cacheStats().hitCount(),
-                client.cacheStats().missCount(),
-                client.cacheStats().evictionCount()
+                client.localSearchCache().stats().hitCount(),
+                client.localSearchCache().stats().missCount(),
+                client.localSearchCache().stats().evictionCount()
         );
     }
 

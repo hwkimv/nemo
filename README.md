@@ -25,6 +25,7 @@
 | 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 지도 외부 호출 감축 (실제 API) | 뷰포트 1회 **25 → 10회**, 응답 **4,770 → 1,857ms** (결과 동일) | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 지도 API HUB 이관 대응 | 지역 검색 401 → 200. 구 경로가 NCP 키를 못 받는 것을 실측으로 확인 | [CS 05](docs/case-studies/05-map-api-cache.md) |
+| 캐시를 데이터 성격별로 분리 | Local Search 5분 / Reverse Geocoding 30분. 실제 API 적중률 **98.9% / 69.9%** | [CS 05](docs/case-studies/05-map-api-cache.md) |
 | 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
 | CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
 | Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
@@ -168,14 +169,16 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 
 **Backend** — Java 21 · Spring Boot 3.5.3 · Spring Security + JWT(jjwt) · Spring Data JPA · springdoc-openapi · AWS SDK v2 (S3) · ZXing(QR) · Jsoup
 
-**관측·검증** — Actuator + Micrometer(Prometheus) · Grafana · Sentry · JUnit5 + AssertJ · k6 · GitHub Actions
+**관측·검증** — Actuator + Micrometer(Prometheus, Caffeine 캐시 지표 포함) · Grafana · Sentry · JUnit5 + AssertJ · k6 · GitHub Actions
 
 **Frontend** — Flutter (Dart SDK 3.8+) · provider · http · flutter_naver_map · mobile_scanner(QR) · image_picker · geolocator
 
 **Data / Infra** — PostgreSQL(Supabase, 운영) · H2(개발) · MariaDB(레거시) · LocalStack · Docker · Nginx
 
-> 캐시는 **`ConcurrentHashMap` + TTL 2분**입니다. Caffeine이나 Redis가 아닙니다.
-> Redis는 다중 인스턴스 요구가 실제로 생기면 검토합니다 — 지금은 근거가 없어 넣지 않았습니다.
+> 지도 캐시는 **Caffeine 로컬 캐시 2개**입니다. 데이터 성격이 달라 나눴습니다 —
+> Local Search는 `expireAfterWrite` 5분, Reverse Geocoding은 30분.
+> Redis가 아니라 **프로세스 안의 메모리**입니다. Redis는 다중 인스턴스 요구가
+> 실제로 생기면 검토합니다 — 지금은 인스턴스가 1개라 근거가 없습니다.
 
 ## 실행
 
@@ -242,7 +245,8 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
 - **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
 - **지도 뷰포트 1회 요청이 외부 API를 10번 부릅니다.** (실측 25 → 10) 캐시가 반복은 막아주지만 첫 요청은 여전히 1.9초입니다. 남은 9회가 키워드 검색이라, 키워드 9개가 다 필요한지를 여러 지역에서 반복 측정한 뒤 줄일 계획입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
-- **지도 캐시에 크기 상한이 없습니다.** Reverse Geocode 키가 좌표 그 자체라 지도를 움직이는 만큼 항목이 늘어납니다. (이 캐시는 `ConcurrentHashMap` + TTL 2분이며 Caffeine이나 Redis가 아닙니다)
+- **지도 캐시는 여전히 프로세스별 로컬 캐시입니다.** 크기 상한(1000 entry)과 통계는 있지만, 인스턴스가 여러 개면 캐시가 공유되지 않고 재시작하면 사라집니다. Redis는 인스턴스가 1개인 지금 도입할 근거가 없어 두었습니다.
+- **TTL 5분/30분은 최적값이 아닙니다.** 데이터 변경 특성으로 정한 초기값이고, TTL별 성능 비교는 하지 않았습니다. Grafana의 적중률·축출을 보고 조정할 값입니다. ([근거](docs/evidence/2026-08-20-map-cache-split.md))
 - **사진 업로드·QR·친구 경로에는 아직 테스트가 없습니다.** 인증·앨범·타임라인 경로만 덮여 있습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
