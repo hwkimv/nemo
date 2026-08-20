@@ -12,6 +12,7 @@ import java.util.stream.Collectors;
 
 import com.nemo.backend.domain.album.dto.*;
 import com.nemo.backend.domain.album.entity.Album;
+import com.nemo.backend.domain.album.entity.AlbumPhoto;
 import com.nemo.backend.domain.album.entity.AlbumShare;
 import com.nemo.backend.domain.album.entity.AlbumShare.Status;
 import com.nemo.backend.domain.album.entity.AlbumFavorite;
@@ -285,10 +286,9 @@ public class AlbumService {
         if (req.getPhotoIdList() != null && !req.getPhotoIdList().isEmpty()) {
             List<Photo> alivePhotos = requireUsablePhotos(userId, req.getPhotoIdList());
 
-            if (saved.getPhotos() == null) {
-                saved.setPhotos(new ArrayList<>());
+            for (int index = 0; index < alivePhotos.size(); index++) {
+                saved.addPhoto(alivePhotos.get(index), index);
             }
-            saved.getPhotos().addAll(alivePhotos);
 
             // 생성 시 사용자가 지정한 썸네일이 있으면 우선 적용 (photoIdList 안에 있는 경우)
             if (req.getCoverPhotoId() != null) {
@@ -309,13 +309,8 @@ public class AlbumService {
             saved.setCoverPhotoUrl(coverUrlOf(cover));
 
             // 앨범에 아직 없는 사진이면 같이 추가
-            if (saved.getPhotos() == null) {
-                saved.setPhotos(new ArrayList<>());
-            }
-            boolean exists = saved.getPhotos().stream()
-                    .anyMatch(existing -> existing.getId().equals(cover.getId()));
-            if (!exists) {
-                saved.getPhotos().add(cover);
+            if (!saved.containsPhoto(cover.getId())) {
+                saved.addPhoto(cover, saved.getAlbumPhotos().size());
             }
         }
 
@@ -353,7 +348,9 @@ public class AlbumService {
             // 존재하지 않음 / 삭제됨 / 남의 사진을 구분해 알려주지 않는다. (존재 여부 탐색 방지)
             throw new ApiException(ErrorCode.PHOTO_NOT_USABLE);
         }
-        return usable;
+        Map<Long, Photo> photosById = usable.stream()
+                .collect(Collectors.toMap(Photo::getId, photo -> photo));
+        return uniqueIds.stream().map(photosById::get).toList();
     }
 
     /** 커버로 쓸 URL: 썸네일이 있으면 썸네일, 없으면 원본 */
@@ -376,16 +373,10 @@ public class AlbumService {
         // "추가하려는 사진을 쓸 수 있는가"는 완전히 다른 질문이므로 여기서 따로 검증한다.
         List<Photo> photos = requireUsablePhotos(userId, photoIdList);
 
-        if (album.getPhotos() == null) {
-            album.setPhotos(new ArrayList<>());
-        }
-
         int count = 0;
         for (Photo p : photos) {
-            boolean alreadyExists = album.getPhotos().stream()
-                    .anyMatch(existing -> existing.getId().equals(p.getId()));
-            if (!alreadyExists) {
-                album.getPhotos().add(p);
+            if (!album.containsPhoto(p.getId())) {
+                album.addPhoto(p, album.getAlbumPhotos().size());
                 count++;
             }
         }
@@ -404,7 +395,7 @@ public class AlbumService {
             throw new ApiException(ErrorCode.FORBIDDEN, "해당 앨범에서 사진을 삭제할 권한이 없습니다.");
         }
 
-        if (album.getPhotos() == null || album.getPhotos().isEmpty()) {
+        if (album.getAlbumPhotos().isEmpty()) {
             return 0;
         }
 
@@ -414,7 +405,7 @@ public class AlbumService {
         String currentCover = album.getCoverPhotoUrl();
         boolean coverWillBeRemoved = false;
         if (currentCover != null && !currentCover.isBlank()) {
-            coverWillBeRemoved = album.getPhotos().stream()
+            coverWillBeRemoved = album.orderedAlivePhotos().stream()
                     .filter(p -> targetIds.contains(p.getId()))
                     .anyMatch(p -> {
                         String candidate = (p.getThumbnailUrl() != null && !p.getThumbnailUrl().isBlank())
@@ -424,12 +415,10 @@ public class AlbumService {
                     });
         }
 
-        int beforeSize = album.getPhotos().size();
-        album.getPhotos().removeIf(p -> targetIds.contains(p.getId()));
-        int count = beforeSize - album.getPhotos().size();
+        int count = album.removePhotos(targetIds);
 
         // 남은 사진 기반 썸네일 처리
-        if (album.getPhotos().isEmpty()) {
+        if (album.getAlbumPhotos().isEmpty()) {
             album.setCoverPhotoUrl(null);
         } else if (coverWillBeRemoved) {
             album.setCoverPhotoUrl(null);
@@ -466,10 +455,8 @@ public class AlbumService {
                     .orElseThrow(() ->
                             new ApiException(ErrorCode.PHOTO_NOT_FOUND, "대표 사진으로 지정할 사진을 찾을 수 없습니다."));
 
-            boolean inAlbum = album.getPhotos() != null &&
-                    album.getPhotos().stream()
-                            .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                            .anyMatch(p -> p.getId().equals(coverPhotoId));
+            boolean inAlbum = album.orderedAlivePhotos().stream()
+                    .anyMatch(p -> p.getId().equals(coverPhotoId));
 
             if (!inAlbum) {
                 throw new ApiException(
@@ -508,9 +495,7 @@ public class AlbumService {
         albumFavoriteRepository.deleteByAlbumId(albumId);
 
         // ✅ 2) 앨범-사진 연관관계 정리
-        if (album.getPhotos() != null && !album.getPhotos().isEmpty()) {
-            album.getPhotos().clear();
-        }
+        album.clearPhotos();
 
         // ✅ 3) 앨범 삭제
         albumRepository.delete(album);
@@ -551,8 +536,7 @@ public class AlbumService {
             Photo photo = photoRepository.findByIdAndDeletedIsFalse(photoId)
                     .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "PHOTO_NOT_FOUND"));
 
-            if (album.getPhotos() == null ||
-                    album.getPhotos().stream().noneMatch(p -> p.getId().equals(photoId))) {
+            if (!album.containsPhoto(photoId)) {
                 throw new ApiException(ErrorCode.FORBIDDEN, "해당 앨범의 사진이 아닙니다.");
             }
 
@@ -653,24 +637,21 @@ public class AlbumService {
             );
         }
 
-        List<Photo> photos = (album.getPhotos() == null)
-                ? List.of()
-                : album.getPhotos().stream()
-                .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                .sorted(Comparator.comparing(Photo::getCreatedAt))
-                .toList();
-
-        int seq = 0;   // ✅ 명세: 0부터 시작
         List<AlbumPhotoDownloadUrlDto> photoDtos = new ArrayList<>();
 
-        for (Photo p : photos) {
+        List<AlbumPhoto> albumPhotos = album.getAlbumPhotos().stream()
+                .sorted(Comparator.comparingInt(AlbumPhoto::getSequence))
+                .filter(albumPhoto -> !Boolean.TRUE.equals(albumPhoto.getPhoto().getDeleted()))
+                .toList();
+        for (AlbumPhoto albumPhoto : albumPhotos) {
+            Photo p = albumPhoto.getPhoto();
             String downloadUrl = p.getImageUrl();
             String filename = buildDownloadFilename(p);
             Long fileSize = resolveFileSize(p);
 
             photoDtos.add(AlbumPhotoDownloadUrlDto.builder()
                     .photoId(p.getId())
-                    .sequence(seq++)
+                    .sequence(albumPhoto.getSequence())
                     .downloadUrl(downloadUrl)
                     .filename(filename)
                     .fileSize(fileSize)
@@ -730,15 +711,13 @@ public class AlbumService {
     /** 앨범의 coverPhotoUrl 자동 설정 로직 */
     private void autoSetThumbnailIfMissing(Album album) {
         // 사진이 아예 없으면 썸네일 제거
-        if (album.getPhotos() == null || album.getPhotos().isEmpty()) {
+        if (album.getAlbumPhotos().isEmpty()) {
             album.setCoverPhotoUrl(null);
             return;
         }
 
         // 살아있는 사진만 필터링
-        List<Photo> alivePhotos = album.getPhotos().stream()
-                .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                .toList();
+        List<Photo> alivePhotos = album.orderedAlivePhotos();
 
         // 살아있는 사진 없으면 썸네일 제거
         if (alivePhotos.isEmpty()) {
@@ -772,10 +751,9 @@ public class AlbumService {
     }
 
     private String pickAutoThumbnailUrl(Album album) {
-        if (album.getPhotos() == null || album.getPhotos().isEmpty()) return null;
+        if (album.getAlbumPhotos().isEmpty()) return null;
 
-        return album.getPhotos().stream()
-                .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
+        return album.orderedAlivePhotos().stream()
                 .sorted(Comparator.comparing(Photo::getCreatedAt).reversed())
                 .map(p -> (p.getThumbnailUrl() != null && !p.getThumbnailUrl().isBlank())
                         ? p.getThumbnailUrl()
@@ -785,18 +763,15 @@ public class AlbumService {
     }
 
     private AlbumDetailResponse toDetail(Album album, String role) {
-        List<AlbumDetailResponse.PhotoSummary> photoList =
-                (album.getPhotos() == null) ? List.of() :
-                        album.getPhotos().stream()
-                                .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
-                                .map(p -> new AlbumDetailResponse.PhotoSummary(
-                                        p.getId(),
-                                        p.getImageUrl(),
-                                        p.getTakenAt(),
-                                        p.getLocation(),
-                                        p.getBrand()
-                                ))
-                                .toList();
+        List<AlbumDetailResponse.PhotoSummary> photoList = album.orderedAlivePhotos().stream()
+                .map(p -> new AlbumDetailResponse.PhotoSummary(
+                        p.getId(),
+                        p.getImageUrl(),
+                        p.getTakenAt(),
+                        p.getLocation(),
+                        p.getBrand()
+                ))
+                .toList();
 
         int photoCount = photoList.size();
 

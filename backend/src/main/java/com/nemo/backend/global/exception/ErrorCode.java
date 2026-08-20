@@ -61,6 +61,12 @@ public enum ErrorCode {
     PHOTO_LIMIT_EXCEEDED(HttpStatus.FORBIDDEN, "PHOTO_LIMIT_EXCEEDED", "저장 가능한 최대 사진 장수를 초과했습니다."),
     // 사진/앨범 도메인
     PHOTO_NOT_FOUND(HttpStatus.NOT_FOUND, "PHOTO_NOT_FOUND", "사진을 찾을 수 없습니다."),
+    PHOTO_TAG_ALREADY_EXISTS(HttpStatus.CONFLICT, "PHOTO_TAG_ALREADY_EXISTS", "이미 태그된 사용자입니다."),
+    PHOTO_TAG_NOT_FOUND(HttpStatus.NOT_FOUND, "PHOTO_TAG_NOT_FOUND", "사진 태그를 찾을 수 없습니다."),
+    PHOTO_TAG_FORBIDDEN(HttpStatus.FORBIDDEN, "PHOTO_TAG_FORBIDDEN", "사진 태그에 대한 권한이 없습니다."),
+    PHOTO_TAG_SELF_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "PHOTO_TAG_SELF_NOT_ALLOWED", "사진 소유자는 자신을 태그할 수 없습니다."),
+    PHOTO_TAG_TARGET_NOT_FRIEND(HttpStatus.FORBIDDEN, "PHOTO_TAG_TARGET_NOT_FRIEND", "수락된 친구만 태그할 수 있습니다."),
+    PHOTO_TAG_POSITION_INVALID(HttpStatus.BAD_REQUEST, "PHOTO_TAG_POSITION_INVALID", "태그 위치는 0과 1 사이여야 합니다."),
     // 앨범에 넣으려는 사진을 쓸 수 없을 때. 존재하지 않음 / 삭제됨 / 남의 사진을 하나의 코드로 합친다.
     // 세 경우를 구분해 응답하면 "그 ID의 사진이 존재하는가"를 남에게 알려주는 탐색 통로가 된다.
     PHOTO_NOT_USABLE(HttpStatus.FORBIDDEN, "PHOTO_NOT_USABLE", "사용할 수 없는 사진이 포함되어 있습니다."),

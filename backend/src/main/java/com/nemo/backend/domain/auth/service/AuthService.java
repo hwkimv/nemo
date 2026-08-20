@@ -416,9 +416,7 @@ public class AuthService {
             // 2-2) 이 앨범이 즐겨찾기 된 내역 전부 삭제 (다른 유저가 즐겨찾기한 것도 포함)
             albumFavoriteRepository.deleteAllByAlbumId(albumId);
 
-            // 2-3) 앨범-사진 매핑은 ManyToMany 이므로
-            //      album 삭제 시 album_photos 조인 테이블 레코드는 자동으로 날아감 (FK+cascade)
-            //      (별도 albumPhotoRepository 가 있으면 거기서 deleteAllByAlbumId 해도 됨)
+            // 2-3) AlbumPhoto는 Album의 orphanRemoval 대상이므로 앨범 삭제와 함께 정리된다.
 
             // 2-4) 앨범 삭제
             albumRepository.delete(album);

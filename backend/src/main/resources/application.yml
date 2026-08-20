@@ -8,6 +8,10 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
+  # H2 개발/테스트는 Hibernate가 새 스키마를 만든다. 운영 PostgreSQL에서만 Flyway를 켠다.
+  flyway:
+    enabled: false
+
   mail:
     host: smtp.gmail.com
     port: 587
