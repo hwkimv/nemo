@@ -34,6 +34,7 @@
 | [2026-08-14 지도 API 캐시 측정](evidence/2026-08-14-map-cache.md) | 캐시 OFF/ON, 외부 호출 수, TTL 만료, 메모리 한계 |
 | [2026-08-15 지도 실제 API 측정](evidence/2026-08-15-map-real-api.md) | API HUB 이관 확인, 페이지네이션 기여도 0%, 25 → 10회 |
 | [2026-08-20 지도 캐시 분리와 TTL 정책 검증](evidence/2026-08-20-map-cache-split.md) | 실제 NAVER API로 캐시 2개 분리·독립 OFF 검증. 적중률 98.9% / 69.9% |
+| [2026-08-20 PostgreSQL 사진 한도 동시성 측정](evidence/2026-08-20-postgresql-photo-quota-concurrency.md) | 동시 8건 한도 보장, 잠금 대기·타임아웃·데드락 감지 통제 실험 |
 | [Grafana 대시보드 화면](evidence/screenshots/) | 실제 렌더링된 대시보드와 패널별 설명 |
 
 **재현 도구**는 `tools/`에 있습니다 — k6 스크립트, 시드 SQL, 실행 계획 SQL, 인덱스 SQL,

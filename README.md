@@ -250,7 +250,7 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **지도 뷰포트 1회 요청이 외부 API를 10번 부릅니다.** (실측 25 → 10) 캐시가 반복은 막아주지만 첫 요청은 여전히 1.9초입니다. 남은 9회가 키워드 검색이라, 키워드 9개가 다 필요한지를 여러 지역에서 반복 측정한 뒤 줄일 계획입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
 - **지도 캐시는 여전히 프로세스별 로컬 캐시입니다.** 크기 상한(1000 entry)과 통계는 있지만, 인스턴스가 여러 개면 캐시가 공유되지 않고 재시작하면 사라집니다. Redis는 인스턴스가 1개인 지금 도입할 근거가 없어 두었습니다.
 - **TTL 5분/30분은 최적값이 아닙니다.** 데이터 변경 특성으로 정한 초기값이고, TTL별 성능 비교는 하지 않았습니다. Grafana의 적중률·축출을 보고 조정할 값입니다. ([근거](docs/evidence/2026-08-20-map-cache-split.md))
-- **사진 업로드·QR·친구 경로에는 아직 테스트가 없습니다.** 인증·앨범·타임라인 경로만 덮여 있습니다.
+- **사진 업로드는 저장 한도 동시성 경로만 확인했습니다.** 실제 S3 저장·QR·친구 경로는 아직 테스트가 없습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
 - 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
 - **지도 API의 레이트 리미터가 동시 요청에 동작하지 않습니다.** 의도는 초당 5회인데 동시 8건이면 초당 40회가 나갑니다. 모니터링을 붙이며 발견했고 아직 고치지 않았습니다. ([CS 06](docs/case-studies/06-monitoring.md))
@@ -258,6 +258,6 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **Sentry에 접속 IP 기반 위치가 저장됩니다.** SDK에서 IP를 지워도 Sentry가 수집 시점의 접속 IP로 지역을 역산합니다. 막으려면 프로젝트 설정에서 `Prevent Storing of IP Addresses`를 켜야 합니다.
 - **Sentry 알림 규칙이 없습니다.** 어떤 이벤트에 누구에게 알릴지는 정하지 않았습니다.
 - **동시성은 사진 저장 한도만 확인했습니다.** "행 개수"나 "합계"에 대한 조건은 전부 같은 위험을 갖습니다. 전수 점검은 하지 않았습니다.
-- **동시성 검증이 H2 기준입니다.** `SELECT ... FOR UPDATE`는 PostgreSQL에서도 같은 의미지만 잠금 대기·데드락 동작은 다릅니다.
+- **사진 한도 동시성은 로컬 Docker PostgreSQL 17.10에서도 확인했습니다.** 동시 8건의 한도 보장과 잠금 대기·타임아웃·데드락 감지 동작을 검증했지만, 운영 Supabase 부하를 재현한 결과는 아닙니다. ([근거](docs/evidence/2026-08-20-postgresql-photo-quota-concurrency.md))
 - **다른 도메인에도 `IllegalStateException`이 남아 있을 수 있습니다.** 친구 도메인만 도메인 오류로 정리했습니다.
 - **배포 스텝이 없습니다.** `deploy.yml`은 배포 전 관문(테스트·secret 확인·이미지 push)까지만 있고, 실제 배포는 대상 플랫폼이 정해지면 붙입니다.

@@ -84,8 +84,21 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform {
-		excludeTags 'performance', 'map-cache-performance'
+		excludeTags 'performance', 'map-cache-performance', 'postgres-concurrency'
 	}
+}
+
+tasks.register('postgresConcurrencyMeasurement', Test) {
+	description = 'Measures photo quota locking behavior on an isolated local PostgreSQL database.'
+	group = 'verification'
+	useJUnitPlatform {
+		includeTags 'postgres-concurrency'
+	}
+	testLogging {
+		events 'passed', 'failed'
+		showStandardStreams = true
+	}
+	shouldRunAfter tasks.named('test')
 }
 
 tasks.register('performanceBaseline', Test) {
