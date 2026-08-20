@@ -13,7 +13,7 @@ date: 2026-08-14
 | **기간** | 2026-08-14 |
 | **범위** | Backend — 사진 저장 한도(`maxPhotoCount`) |
 | **결과** | 동시 8건 → 최종 **26장에서 20장으로** |
-| **증거** | `PhotoQuotaConcurrencyTest` (2) — 수정 전 실패, 수정 후 통과 |
+| **증거** | H2 회귀 테스트 2개 + PostgreSQL 17.10 측정 4개 |
 
 ---
 
@@ -149,13 +149,30 @@ assertThatThrownBy(() -> storageService.reserveQuotaOrThrow(user.getId()))
 **같은 테스트가 수정 전에는 실패하고 수정 후에 통과합니다.**
 테스트가 공허하지 않다는 근거입니다.
 
+### PostgreSQL에서 다시 확인
+
+H2 통과를 운영 DB 근거로 확대하지 않기 위해 Docker PostgreSQL 17.10의 전용 로컬 DB에서
+한도 흐름과 잠금 동작을 분리해 측정했습니다.
+
+| 검증 | 관찰 결과 |
+|---|---|
+| 실제 `PhotoService.uploadHybrid()`로 동시 8건 | 성공 1건, 한도 거절 7건, 최종 20장 |
+| 다른 트랜잭션이 잡은 사용자 행 대기 | 306ms 대기 후 정상 진행 |
+| `lock_timeout = 250ms` | 289ms 뒤 SQLSTATE `55P03`으로 중단 |
+| 의도적 두 행 교차 잠금 | 1,001ms 뒤 한 트랜잭션을 `40P01`로 중단, 다른 트랜잭션 정상 완료 |
+
+마지막 검증은 **현재 업로드 흐름에서 데드락이 발생했다는 뜻이 아닙니다.** 두 사용자 행을
+반대 순서로 잠그는 통제 실험으로 PostgreSQL의 감지·중단 동작만 확인했습니다.
+상세 조건과 재현 명령은 [PostgreSQL 사진 한도 동시성 측정](../evidence/2026-08-20-postgresql-photo-quota-concurrency.md)에 남겼습니다.
+
 ---
 
 ## Limit / Next Condition
 
-- **H2에서 검증했습니다.** `SELECT ... FOR UPDATE`는 PostgreSQL에서도 같은 의미지만,
-  잠금 대기 시간과 데드락 감지 동작은 다릅니다. PostgreSQL에서 재확인이 필요합니다.
-  (CI에 PostgreSQL 서비스 컨테이너를 붙이면 함께 해결됩니다 — [CS 07](07-ci-cd.md))
+- **PostgreSQL 검증은 로컬 Docker 환경입니다.** 한도 보장과 DB 잠금 동작은 확인했지만,
+  운영 Supabase의 연결 풀·부하·네트워크 조건을 재현한 결과는 아닙니다.
+- **PostgreSQL 측정은 기본 테스트와 분리했습니다.** CI에는 아직 PostgreSQL 서비스 컨테이너가 없어
+  `postgresConcurrencyMeasurement`를 자동 실행하지 않습니다. ([CS 07](07-ci-cd.md))
 - **잠금 타임아웃을 지정하지 않았습니다.** 기본값에 맡겨져 있습니다.
   업로드가 몰릴 때 대기가 길어지면 타임아웃과 재시도 정책이 필요합니다.
 - **S3 업로드가 트랜잭션 안에 있습니다.** 잠금 구간은 짧게 뒀지만 트랜잭션 자체는
@@ -173,12 +190,15 @@ assertThatThrownBy(() -> storageService.reserveQuotaOrThrow(user.getId()))
 | 항목 | 위치 |
 |---|---|
 | 재현·검증 테스트 | `PhotoQuotaConcurrencyTest` |
+| PostgreSQL 전용 측정 | `PostgresPhotoQuotaConcurrencyMeasurementTest` |
+| PostgreSQL 측정 원자료 | `docs/evidence/2026-08-20-postgresql-photo-quota-concurrency.md` |
 | 잠금 조회 | `UserRepository.findByIdForUpdate` |
 | 최종 확인 | `StorageService.reserveQuotaOrThrow` |
 | 호출 위치 | `PhotoServiceImpl.uploadHybrid` (저장 직전) |
 
 ```bash
 cd backend && ./gradlew test --tests '*PhotoQuotaConcurrencyTest*'
+./gradlew postgresConcurrencyMeasurement --rerun-tasks
 ```
 
 수정 전 상태를 보려면 `reserveQuotaOrThrow` 호출을 지우고 같은 테스트를 돌리면 됩니다.
