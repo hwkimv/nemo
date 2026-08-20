@@ -36,6 +36,8 @@ public interface PhotoRepository extends JpaRepository<Photo, Long> {
     // ✅ 특정 사진이 살아있는지 검사할 때 사용
     Optional<Photo> findByIdAndDeletedIsFalse(Long id);
 
+    Optional<Photo> findByIdAndUserIdAndDeletedIsFalse(Long id, Long userId);
+
     // ✅ 앨범에 넣어도 되는 사진만 조회 (요청자 소유 + 미삭제)
     //    findAllById()와 달리 userId 조건이 들어 있어, 남의 사진 ID는 애초에 결과에 나오지 않는다.
     List<Photo> findAllByIdInAndUserIdAndDeletedIsFalse(Collection<Long> ids, Long userId);

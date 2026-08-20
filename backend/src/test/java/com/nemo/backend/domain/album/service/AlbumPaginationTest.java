@@ -113,7 +113,7 @@ class AlbumPaginationTest {
         p.setUserId(owner.getId());
         p.setImageUrl("https://example.test/" + UUID.randomUUID() + ".jpg");
         p.setDeleted(false);
-        album.setPhotos(new ArrayList<>(List.of(photoRepository.save(p))));
+        album.addPhoto(photoRepository.save(p), 0);
 
         return albumRepository.save(album);
     }

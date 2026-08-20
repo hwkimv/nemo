@@ -1231,12 +1231,11 @@ public class PhotoServiceImpl implements PhotoService {
                 .findByUserIdAndStatusAndActiveTrue(userId, AlbumShare.Status.ACCEPTED);
 
         for (AlbumShare share : shares) {
-            if (share.getAlbum() == null || share.getAlbum().getPhotos() == null) {
+            if (share.getAlbum() == null) {
                 continue;
             }
 
-            boolean contains = share.getAlbum().getPhotos().stream()
-                    .filter(p -> !Boolean.TRUE.equals(p.getDeleted()))
+            boolean contains = share.getAlbum().orderedAlivePhotos().stream()
                     .anyMatch(p -> Objects.equals(p.getId(), photo.getId()));
 
             if (contains) {

@@ -645,9 +645,7 @@ public class PhotoController {
         // 내가 소유한 앨범
         List<Album> myAlbums = albumRepository.findByUserId(userId);
         for (Album album : myAlbums) {
-            if (album.getPhotos() == null) continue;
-            album.getPhotos().stream()
-                    .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
+            album.orderedAlivePhotos().stream()
                     .forEach(p -> ids.add(p.getId()));
         }
 
@@ -656,9 +654,8 @@ public class PhotoController {
                 albumShareRepository.findByUserIdAndStatusAndActiveTrue(userId, AlbumShare.Status.ACCEPTED);
         for (AlbumShare share : shares) {
             Album album = share.getAlbum();
-            if (album == null || album.getPhotos() == null) continue;
-            album.getPhotos().stream()
-                    .filter(p -> Boolean.FALSE.equals(p.getDeleted()))
+            if (album == null) continue;
+            album.orderedAlivePhotos().stream()
                     .forEach(p -> ids.add(p.getId()));
         }
 

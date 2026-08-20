@@ -30,8 +30,9 @@
 | CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
 | Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
 | 동시성 검증 | 동시 업로드가 저장 한도를 넘던 문제 (**26장 → 20장**) | [CS 09](docs/case-studies/09-concurrency.md) |
-| 인증 경로 테스트 | 전체 **110개** (인증 37 + 보안 17 + 조회 20 + 캐시 6 + 스크러빙 13 + 동시성 2 + 기타 15) | [CS 01](docs/case-studies/01-jwt-authentication.md) |
+| 자동 회귀 테스트 | 전체 **156개**, 실패·오류·skip 0 (2026-08-20) | [CS 01](docs/case-studies/01-jwt-authentication.md), [AlbumPhoto·PhotoTag](docs/album-photo-photo-tag-implementation.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
+| 앨범 사진 순서·친구 위치 태그 | `AlbumPhoto` 순서 영속화, `PhotoTag` 생성·조회·삭제와 권한 검증 | [구현 근거](docs/album-photo-photo-tag-implementation.md) |
 
 **측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
 
@@ -127,6 +128,8 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 
 **정합성**
 - 동시 업로드가 저장 한도를 넘던 문제 — 깨지는 것을 먼저 증명하고 수정
+- `AlbumPhoto` 관계 엔티티로 요청 순서를 저장하고 삭제 뒤 sequence를 재정렬
+- `PhotoTag` 생성·조회·삭제 API와 소유권·친구·공유 앨범 권한 검증
 
 > 이 과정에서 **계획에 없던 결함 13건**을 추가로 발견해 고쳤습니다.
 > 대부분은 "만들어서"가 아니라 **"확인해봐서"** 나왔습니다.
@@ -167,7 +170,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 
 ## 기술 스택
 
-**Backend** — Java 21 · Spring Boot 3.5.3 · Spring Security + JWT(jjwt) · Spring Data JPA · springdoc-openapi · AWS SDK v2 (S3) · ZXing(QR) · Jsoup
+**Backend** — Java 21 · Spring Boot 3.5.3 · Spring Security + JWT(jjwt) · Spring Data JPA · Flyway · springdoc-openapi · AWS SDK v2 (S3) · ZXing(QR) · Jsoup
 
 **관측·검증** — Actuator + Micrometer(Prometheus, Caffeine 캐시 지표 포함) · Grafana · Sentry · JUnit5 + AssertJ · k6 · GitHub Actions
 
@@ -226,7 +229,7 @@ Grafana `http://localhost:3000` (admin / admin) → NEMO 폴더. 앱은 호스�
 cd backend && ./gradlew test
 ```
 
-**110 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**156 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 

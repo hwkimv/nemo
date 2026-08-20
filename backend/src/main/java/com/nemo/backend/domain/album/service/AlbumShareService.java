@@ -404,7 +404,7 @@ public class AlbumShareService {
         return shares.stream()
                 .map(share -> {
                     Album album = share.getAlbum();
-                    int photoCount = (album.getPhotos() == null) ? 0 : album.getPhotos().size();
+                    int photoCount = album.orderedAlivePhotos().size();
                     String coverUrl = album.getCoverPhotoUrl();
                     return SharedAlbumSummaryResponse.from(album, share, coverUrl, photoCount);
                 })

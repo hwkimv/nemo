@@ -143,7 +143,7 @@ class AlbumListQueryCountTest {
             album.setName("삭제된 사진만 있는 앨범");
             album.setUser(em.getReference(User.class, user.getId()));
             album.setCoverPhotoUrl("https://example.test/stale-cover.jpg"); // 이미 죽은 커버
-            album.setPhotos(new ArrayList<>(List.of(persistPhoto(user, true))));
+            album.addPhoto(persistPhoto(user, true), 0);
             albumRepository.save(album);
         });
 
@@ -190,7 +190,9 @@ class AlbumListQueryCountTest {
                     photos.add(persistPhoto(user, false));
                 }
                 photos.add(persistPhoto(user, true)); // 장수에 포함되면 안 되는 삭제 사진
-                album.setPhotos(photos);
+                for (int sequence = 0; sequence < photos.size(); sequence++) {
+                    album.addPhoto(photos.get(sequence), sequence);
+                }
 
                 albumRepository.save(album);
             }

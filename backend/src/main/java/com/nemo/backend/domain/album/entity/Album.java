@@ -7,7 +7,9 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "album")
@@ -33,12 +35,48 @@ public class Album extends BaseEntity {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    // ✅ 앨범에 포함된 사진 (N:N)
-    @ManyToMany(fetch = FetchType.LAZY)
-    @JoinTable(
-            name = "album_photos",
-            joinColumns = @JoinColumn(name = "album_id"),
-            inverseJoinColumns = @JoinColumn(name = "photo_id")
-    )
-    private List<Photo> photos = new ArrayList<>();
+    @OneToMany(mappedBy = "album", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sequence ASC")
+    @Builder.Default
+    private List<AlbumPhoto> albumPhotos = new ArrayList<>();
+
+    public void addPhoto(Photo photo, int sequence) {
+        if (photo == null || containsPhoto(photo.getId())) {
+            return;
+        }
+        albumPhotos.add(new AlbumPhoto(this, photo, sequence));
+        albumPhotos.sort(Comparator.comparingInt(AlbumPhoto::getSequence));
+    }
+
+    public boolean containsPhoto(Long photoId) {
+        return photoId != null && albumPhotos.stream()
+                .anyMatch(albumPhoto -> photoId.equals(albumPhoto.getPhoto().getId()));
+    }
+
+    public int removePhotos(Set<Long> photoIds) {
+        int before = albumPhotos.size();
+        albumPhotos.removeIf(albumPhoto -> photoIds.contains(albumPhoto.getPhoto().getId()));
+        compactSequences();
+        return before - albumPhotos.size();
+    }
+
+    public void compactSequences() {
+        albumPhotos.sort(Comparator.comparingInt(AlbumPhoto::getSequence));
+        for (int index = 0; index < albumPhotos.size(); index++) {
+            albumPhotos.get(index).updateSequence(index);
+        }
+    }
+
+    public List<Photo> orderedAlivePhotos() {
+        return albumPhotos.stream()
+                .sorted(Comparator.comparingInt(AlbumPhoto::getSequence))
+                .map(AlbumPhoto::getPhoto)
+                .filter(photo -> !Boolean.TRUE.equals(photo.getDeleted()))
+                .toList();
+    }
+
+    public void clearPhotos() {
+        albumPhotos.clear();
+    }
+
 }

@@ -29,9 +29,11 @@ public interface AlbumRepository extends JpaRepository<Album, Long> {
         SELECT new com.nemo.backend.domain.album.dto.AlbumPhotoRow(
                    a.id, p.thumbnailUrl, p.imageUrl, p.createdAt)
         FROM Album a
-        JOIN a.photos p
+        JOIN a.albumPhotos ap
+        JOIN ap.photo p
         WHERE a.id IN :albumIds
           AND p.deleted = false
+        ORDER BY a.id, ap.sequence
         """)
     List<AlbumPhotoRow> findAlivePhotoRows(@Param("albumIds") Collection<Long> albumIds);
 }
