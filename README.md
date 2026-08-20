@@ -30,7 +30,8 @@
 | CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
 | Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
 | 동시성 검증 | 동시 업로드가 저장 한도를 넘던 문제 (**26장 → 20장**) | [CS 09](docs/case-studies/09-concurrency.md) |
-| 자동 회귀 테스트 | 전체 **156개**, 실패·오류·skip 0 (2026-08-20) | [CS 01](docs/case-studies/01-jwt-authentication.md), [AlbumPhoto·PhotoTag](docs/album-photo-photo-tag-implementation.md) |
+| S3↔DB 정합성 | 트랜잭션이 못 막는 불일치 **3가지 재현** → 보상 처리 + DB 기반 재시도 (인프라 추가 0) | [CS 10](docs/case-studies/10-storage-consistency.md) |
+| 자동 회귀 테스트 | 전체 **173개**, 실패·오류·skip 0 | [CS 01](docs/case-studies/01-jwt-authentication.md), [AlbumPhoto·PhotoTag](docs/album-photo-photo-tag-implementation.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 | 앨범 사진 순서·친구 위치 태그 | `AlbumPhoto` 순서 영속화, `PhotoTag` 생성·조회·삭제와 권한 검증 | [구현 근거](docs/album-photo-photo-tag-implementation.md) |
 
@@ -156,6 +157,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 돌려보며 드러난 결함 5건 |
 | 08 | [Sentry를 붙였는데 이벤트가 0건이었다](docs/case-studies/08-sentry.md) | 전역 핸들러가 삼키던 예외. 정상 상황이 500이던 문제 |
+| 10 | [DB 트랜잭션이 지켜주지 못하는 경계](docs/case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지를 테스트로 재현. 보상 처리 + DB 기반 재시도로 복구 |
 | 09 | [unique 제약이 지켜주지 않는 조건 하나](docs/case-studies/09-concurrency.md) | 깨지는 것을 먼저 증명하고 고친 동시성 결함 |
 
 전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
@@ -244,6 +246,9 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 
 포트폴리오 문서가 실제보다 앞서 나가지 않도록, 현재 확인되지 않은 것을 적어 둡니다.
 
+- **기존에 쌓인 S3 고아 객체는 그대로입니다.** 이번 정합성 작업은 앞으로 생기는 것을 막을 뿐입니다. 과거 것을 찾으려면 S3 객체 목록과 DB를 대조하는 별도 작업이 필요합니다. ([CS 10](docs/case-studies/10-storage-consistency.md))
+- **`storage_cleanup_task` 테이블에 보관 정책이 없습니다.** `COMPLETED` 행이 계속 쌓입니다. 삭제 쿼리는 SQL 파일에 주석으로만 있고 자동화하지 않았습니다.
+- **마이그레이션 도구가 없습니다.** prod는 `ddl-auto=validate`라 새 테이블을 배포 전에 `tools/storage/sql/`의 SQL로 **수동 적용**해야 합니다.
 - **조회 성능만 측정했습니다.** 앨범·타임라인·사진 조회는 Before/After가 있지만, 업로드·QR 경로는 측정하지 않았습니다.
 - **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
 - **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.

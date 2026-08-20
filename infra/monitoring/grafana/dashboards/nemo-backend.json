@@ -565,6 +565,127 @@
           "legendFormat": "{{api}}"
         }
       ]
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "S3 파일 정리 (정합성 복구)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "자동 복구를 포기한 작업",
+      "description": "최대 재시도를 넘겨 FAILED로 남은 정리 작업 수. 0이 아니면 S3에 지워지지 않은 파일이 있고 자동으로는 해결되지 않는다는 뜻이다. tools/storage/sql/storage-cleanup-task.sql의 점검 쿼리로 무엇이 왜 실패했는지 확인한다.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(storage_cleanup_tasks_permanently_failed{job=\"nemo-backend\"})",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "밀린 정리 작업 수",
+      "description": "처리를 기다리는 작업 수. 정상이면 0에 가깝다 — S3가 멀쩡하면 즉시 보상으로 끝나기 때문이다. 이 값이 계속 오르면 S3가 죽었거나 워커가 못 따라가고 있다.",
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 6,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "0",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(storage_cleanup_tasks_pending{job=\"nemo-backend\"})",
+          "legendFormat": "대기 중"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "정리 처리 결과 (초당)",
+      "description": "compensated_inline은 문제가 난 자리에서 바로 해결된 것, completed는 워커가 재시도해 성공한 것. retried가 오르면 S3가 불안정하다는 신호이고, failed가 오르면 자동 복구를 포기했다는 뜻이다.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "noValue": "0",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(storage_cleanup_tasks_total{job=\"nemo-backend\"}[5m]))",
+          "legendFormat": "{{result}}"
+        }
+      ]
     }
   ]
 }
