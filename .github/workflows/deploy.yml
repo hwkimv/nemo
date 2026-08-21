@@ -76,8 +76,9 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
+          # 없으면 앱이 기동조차 못 하는 값. 하나라도 빠지면 배포를 막는다.
           missing=0
-          for name in DB_URL DB_USER DB_PASSWORD JWT_SECRET SENTRY_DSN; do
+          for name in DB_URL DB_USER DB_PASSWORD JWT_SECRET; do
             # 값이 아니라 "설정됐는지" 여부만 본다
             if [ -z "$(printenv "$name")" ]; then
               echo "::error::GitHub Secrets 에 $name 이 없습니다"
@@ -86,6 +87,20 @@ jobs:
               echo "  ok  $name"
             fi
           done
+
+          # SENTRY_DSN 은 없어도 앱이 돈다.
+          # application.yml 이 ${SENTRY_DSN:} 로 빈 기본값을 주고,
+          # DSN 이 비면 SDK 가 비활성 상태로 동작한다.
+          #
+          # 그래서 배포를 막지는 않는다. 오류 추적이 없다고 서비스를 못 띄울 이유는 없다.
+          # 다만 조용히 넘기지도 않는다 — 운영에서 예외가 나도 아무도 모르는 상태가 된다.
+          if [ -z "$SENTRY_DSN" ]; then
+            echo "::warning::SENTRY_DSN 이 없습니다. 오류 추적 없이 배포됩니다."
+            echo "  warn  SENTRY_DSN (미설정 — Sentry 비활성)"
+          else
+            echo "  ok    SENTRY_DSN"
+          fi
+
           exit $missing
 
   push-image:
