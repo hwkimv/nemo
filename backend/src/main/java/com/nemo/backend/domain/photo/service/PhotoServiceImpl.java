@@ -10,6 +10,8 @@ import com.nemo.backend.domain.photo.entity.Photo;
 import com.nemo.backend.domain.photo.repository.PhotoRepository;
 import com.nemo.backend.domain.album.entity.AlbumShare;
 import com.nemo.backend.domain.album.repository.AlbumShareRepository;
+import com.nemo.backend.domain.storage.entity.StorageCleanupTask;
+import com.nemo.backend.domain.storage.service.StorageCleanupService;
 import com.nemo.backend.domain.storage.service.StorageService;
 import com.nemo.backend.global.exception.ApiException;
 import com.nemo.backend.global.exception.ErrorCode;
@@ -63,15 +65,22 @@ public class PhotoServiceImpl implements PhotoService {
     private final AlbumShareRepository albumShareRepository;
     private final String publicBaseUrl;
     private final StorageService storageService;
+    private final PhotoPersistence photoPersistence;
+    private final StorageCleanupService cleanupService;
 
     public PhotoServiceImpl(PhotoRepository photoRepository,
                             PhotoStorage storage,
                             AlbumShareRepository albumShareRepository,
-                            @Value("${app.public-base-url:http://localhost:8080}") String publicBaseUrl, StorageService storageService) {
+                            @Value("${app.public-base-url:http://localhost:8080}") String publicBaseUrl,
+                            StorageService storageService,
+                            PhotoPersistence photoPersistence,
+                            StorageCleanupService cleanupService) {
         this.photoRepository = photoRepository;
         this.storage = storage;
         this.albumShareRepository = albumShareRepository;
         this.storageService = storageService;
+        this.photoPersistence = photoPersistence;
+        this.cleanupService = cleanupService;
         this.publicBaseUrl = publicBaseUrl.replaceAll("/+$", "");
     }
 
@@ -82,7 +91,21 @@ public class PhotoServiceImpl implements PhotoService {
     // ========================================================
     // 1) QR/갤러리 혼합 업로드 (location / memo 저장, video는 DB에 안 넣음)
     // ========================================================
+    /**
+     * <h3>트랜잭션 경계</h3>
+     * 이 메서드에는 트랜잭션이 없다({@code NOT_SUPPORTED}). 두 가지 이유다.
+     * <ul>
+     *   <li>S3 업로드와 QR 크롤링은 <b>느린 네트워크 호출</b>이다.
+     *       트랜잭션이 이걸 감싸면 그동안 DB 커넥션과 사용자 행 잠금을 쥔 채로 기다린다.
+     *       업로드가 몰리면 커넥션 풀이 먼저 마른다.</li>
+     *   <li>S3는 롤백되지 않는다. 트랜잭션으로 감싸 봐야 <b>보호받는다는 착각</b>만 준다.
+     *       실제로 DB INSERT가 실패하면 S3 객체는 그대로 남았다(PhotoStorageConsistencyTest).</li>
+     * </ul>
+     * DB 작업은 {@link PhotoPersistence}가 짧은 트랜잭션으로 처리하고,
+     * 그게 실패하면 여기서 올린 파일을 보상 삭제한다.
+     */
     @Override
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public PhotoResponseDto uploadHybrid(Long userId,
                                          String qrUrlOrPayload,
                                          MultipartFile image,
@@ -111,10 +134,14 @@ public class PhotoServiceImpl implements PhotoService {
 
         String storedImage;
         String storedThumb;
+        // 우리가 이번 요청에서 직접 올린 S3 키. DB 저장이 실패하면 이걸 다시 지워야 한다.
+        // QR 크롤링으로 가져온 외부 URL은 우리 것이 아니므로 여기에 담지 않는다.
+        String uploadedKey = null;
 
         if (image != null && !image.isEmpty()) {
             try {
                 String key = storage.store(image);
+                uploadedKey = key;
                 String url = toPublicUrl(key);
                 storedImage = url;
                 storedThumb = url;
@@ -155,13 +182,22 @@ public class PhotoServiceImpl implements PhotoService {
         );
         photo.setMemo(memo);
 
-        // 저장 직전에 한도를 다시 확인한다. 이번에는 사용자 행을 잠근 채로 센다.
-        // 위쪽 checkPhotoLimitOrThrow()는 느린 파일 저장 전에 미리 거절하기 위한 것이고,
-        // 세는 시점과 INSERT 시점 사이의 틈은 여기서만 닫힌다.
-        storageService.reserveQuotaOrThrow(userId);
-
-        Photo saved = photoRepository.save(photo);
-        return new PhotoResponseDto(saved);
+        // ───────────────────────────────────────────────────────────────
+        // DB 저장. 여기서 실패하면 방금 올린 S3 파일은 아무도 모르는 고아가 된다.
+        // DB 트랜잭션은 S3를 롤백하지 못하므로 우리가 직접 치워야 한다.
+        // ───────────────────────────────────────────────────────────────
+        try {
+            Photo saved = photoPersistence.save(userId, photo);
+            return new PhotoResponseDto(saved);
+        } catch (RuntimeException e) {
+            if (uploadedKey != null) {
+                // 즉시 삭제를 시도하고, 그마저 실패하면 DB에 적어 워커가 이어받는다.
+                // 로그만 남기면 그 파일은 영원히 남는다.
+                cleanupService.deleteNowOrScheduleRetry(
+                        uploadedKey, StorageCleanupTask.Reason.UPLOAD_ROLLBACK);
+            }
+            throw e;
+        }
     }
 
     // ========================================================
@@ -194,33 +230,43 @@ public class PhotoServiceImpl implements PhotoService {
     // ========================================================
     // 3) 사진 삭제
     // ========================================================
+    /**
+     * <h3>순서를 뒤집었다 — DB 먼저, S3 나중</h3>
+     * 예전에는 S3를 먼저 지우고 DB를 나중에 건드렸다. 두 가지가 깨졌다.
+     * <ul>
+     *   <li>S3 삭제 성공 → DB 실패 : <b>되돌릴 수 없다.</b> DB에는 사진이 있는데 파일이 없다.
+     *       사용자에게는 목록에 보이지만 열리지 않는 사진이 된다.</li>
+     *   <li>S3 삭제 실패 → 예외를 삼키고 DB만 삭제 : 지울 키를 아는 코드가 사라진다.</li>
+     * </ul>
+     *
+     * <p>지금은 DB 삭제와 "이 파일을 지워야 한다"는 기록을 <b>같은 트랜잭션</b>에 넣는다.
+     * 커밋되면 둘 다, 롤백되면 둘 다 없다. 실제 S3 삭제는 그 뒤에 시도한다.
+     *
+     * <p>최악의 경우가 "파일이 잠깐 더 남아 있는 것"으로 바뀐다.
+     * 이건 워커가 나중에 지울 수 있다. <b>사라진 파일은 되살릴 수 없다.</b>
+     */
     @Override
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void delete(Long userId, Long photoId) {
-        Photo photo = photoRepository.findByIdAndDeletedIsFalse(photoId)
-                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_ARGUMENT, "존재하지 않는 사진입니다."));
-        if (!photo.getUserId().equals(userId)) {
-            throw new ApiException(ErrorCode.UNAUTHORIZED, "삭제 권한이 없습니다.");
+        // 1) 어떤 키를 지워야 하는지 먼저 읽는다 (짧은 읽기 트랜잭션)
+        Photo photo = photoPersistence.findOwnedPhotoOrThrow(userId, photoId);
+
+        List<String> keys = new ArrayList<>();
+        String imageKey = extractStorageKeyFromUrl(photo.getImageUrl());
+        String thumbKey = extractStorageKeyFromUrl(photo.getThumbnailUrl());
+        if (imageKey != null) keys.add(imageKey);
+        if (thumbKey != null && !thumbKey.equals(imageKey)) keys.add(thumbKey);
+
+        // 2) DB 삭제 + 정리 작업 예약을 한 트랜잭션에서 커밋한다.
+        //    여기서 실패하면 S3는 손대지 않은 상태 그대로다 — 되돌릴 것이 없다.
+        List<Long> taskIds = photoPersistence.markDeletedAndScheduleCleanup(userId, photoId, keys);
+
+        // 3) 커밋된 뒤에 실제 파일을 지운다. 실패해도 2)에서 적어 둔 작업이 남아 있어
+        //    워커가 재시도한다. 그래서 여기서는 예외를 밖으로 내보내지 않는다.
+        //    사용자 입장에서 사진은 이미 삭제됐고, 파일 정리는 우리 몫이다.
+        for (Long taskId : taskIds) {
+            cleanupService.runNow(taskId);
         }
-
-        // ===== S3 저장소에서 실제 파일 삭제 (best-effort) =====
-        try {
-            String imageKey = extractStorageKeyFromUrl(photo.getImageUrl());
-            String thumbKey = extractStorageKeyFromUrl(photo.getThumbnailUrl());
-
-            if (imageKey != null) {
-                storage.delete(imageKey);
-            }
-            if (thumbKey != null && !thumbKey.equals(imageKey)) {
-                storage.delete(thumbKey);
-            }
-        } catch (Exception e) {
-            // S3 삭제 실패해도 서비스 전체 장애로 가지 않게 워닝만 남기고 넘어감
-            log.warn("[PHOTO][delete] S3 삭제 실패 photoId={}, err={}", photoId, e.toString());
-        }
-        // ===== 여기까지 S3 삭제 =====
-
-        photo.setDeleted(true);
-        photoRepository.save(photo);
     }
 
     // ========================================================
