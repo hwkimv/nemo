@@ -4,11 +4,14 @@ package com.nemo.backend.domain.map.util;
 import com.github.benmanes.caffeine.cache.Ticker;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
+import com.nemo.backend.global.exception.ApiException;
+import com.nemo.backend.global.exception.ErrorCode;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -89,6 +92,16 @@ public class NaverApiClient {
     private final Counter localSearchCalls;
     private final Counter reverseGeocodeCalls;
 
+    // ───────────────────────────────────────────────────────────────
+    // 레이트 리미터 관측
+    //
+    // 호출 수(naver.api.calls)만으로는 "제한이 걸렸는지"를 알 수 없다.
+    // 리미터 앞에서 얼마나 기다렸는지, 기다리다 포기한 게 몇 건인지를 따로 봐야
+    // 상한(min-interval, max-wait)이 지금 트래픽에 맞는지 판단할 수 있다.
+    // ───────────────────────────────────────────────────────────────
+    private final Timer rateLimitWaitTimer;
+    private final Counter rateLimitRejections;
+
     /**
      * @param localSearchTtlSeconds     업체 검색 결과 캐시 유효시간. 기본 5분.
      *                                  0이면 이 캐시만 꺼진다.
@@ -145,14 +158,64 @@ public class NaverApiClient {
                 .tag("api", "reverse-geocoding")
                 .register(meterRegistry);
 
+        this.rateLimitWaitTimer = Timer.builder("naver.api.rate.limit.wait")
+                .description("레이트 리미터 앞에서 기다린 시간")
+                .register(meterRegistry);
+        this.rateLimitRejections = Counter.builder("naver.api.rate.limit.rejections")
+                .description("대기 상한을 넘겨 거절한 요청 수 — 계속 오르면 상한이나 호출 수를 손봐야 한다")
+                .register(meterRegistry);
+
         log.info("[NAVER][CACHE] {} | {}", localSearchCache.describe(), reverseGeocodeCache.describe());
     }
 
     // ───────────────────────────────────────────────────────────────
-    // (B) 아주 단순한 레이트 리미터: 외부 호출 사이 최소 간격 200ms 확보(초당 최대 5회)
+    // (B) 레이트 리미터: 외부 호출 사이 최소 간격 200ms 확보(초당 최대 5회)
+    //
+    // ⚠️ 예전 구현은 동시 요청에서 전혀 동작하지 않았다.
+    //
+    //     long last = lastCallAt.get();                 // ① 읽고
+    //     if (elapsed < MIN_INTERVAL_MS) sleep(...);    // ② 자고
+    //     lastCallAt.set(System.currentTimeMillis());   // ③ 쓴다
+    //
+    // AtomicLong의 get()과 set()은 각각 원자적이지만, ①②③ 전체는 하나의 원자적 연산이 아니다.
+    // 스레드 여러 개가 ①에서 같은 값을 읽으면 같은 대기 시간을 계산하고, 같이 자고, 같이 깨어
+    // 거의 동시에 외부 API를 부른다. 그 다음 ③을 순서 없이 덮어쓴다.
+    // 실측: 동시 16에서 호출률 74.0회/초 (의도 5.0회/초), 최소 호출 간격 0ms.
+    //
+    // 지금은 updateAndGet으로 "내 차례"를 원자적으로 예약한다.
+    // 각 스레드가 서로 다른 시각을 받아 가므로 겹치지 않는다.
     // ───────────────────────────────────────────────────────────────
-    private static final long MIN_INTERVAL_MS = 200;
-    private final AtomicLong lastCallAt = new AtomicLong(0);
+
+    /** 외부 호출 사이 최소 간격. 200ms = 초당 5회. */
+    @Value("${naver.rate-limit.min-interval-ms:200}")
+    private long minIntervalMs = 200;
+
+    /**
+     * 리미터 앞에서 기다릴 수 있는 최대 시간.
+     *
+     * <p>동시 요청이 몰리면 뒤에 선 스레드일수록 오래 기다린다.
+     * 동시 16이면 마지막 스레드는 이론상 16 × 200ms를 기다린다.
+     * 그 사이 클라이언트는 이미 떠났을 수 있고, 서버는 스레드만 붙잡고 있게 된다.
+     * 상한을 넘길 만큼 밀렸으면 <b>기다리지 말고 바로 실패</b>시킨다.
+     */
+    @Value("${naver.rate-limit.max-wait-ms:10000}")
+    private long maxWaitMs = 10_000;
+
+    /**
+     * 다음 호출이 나갈 수 있는 가장 이른 시각(nanoTime 기준).
+     *
+     * <p>"마지막 호출 시각"이 아니라 <b>"다음 차례"</b>를 담는다.
+     * 예약 시점에 값이 미래로 밀리므로, 뒤따라오는 스레드는 자동으로 그 뒤에 줄을 선다.
+     *
+     * <p><b>currentTimeMillis가 아니라 nanoTime을 쓴다.</b>
+     * 벽시계는 NTP 보정으로 <b>뒤로 점프할 수 있다.</b> 그러면 이미 예약된 차례가
+     * 갑자기 먼 미래가 되어 모든 요청이 길게 멈춘다. nanoTime은 단조 증가라 그런 일이 없다.
+     * 여기서 필요한 것은 "지금 몇 시인가"가 아니라 "얼마나 지났는가"다.
+     *
+     * <p>0은 "아직 아무도 호출하지 않음"을 뜻할 수 없다(nanoTime은 음수일 수도 있다).
+     * 그래서 첫 예약 여부를 따로 두지 않고, 기동 시각을 초기값으로 넣는다.
+     */
+    private final AtomicLong nextSlotAtNanos = new AtomicLong(System.nanoTime());
     // ───────────────────────────────────────────────────────────────
 
     /**
@@ -199,15 +262,18 @@ public class NaverApiClient {
         headers.set("X-NCP-APIGW-API-KEY-ID", clientId);
         headers.set("X-NCP-APIGW-API-KEY", clientSecret);
 
-        // 4) 레이트 리밋: 외부로 너무 자주 나가지 않도록 최소 간격 보장
-        enforceMinInterval();
-
-        // 5) 429(Too Many Requests) 대비: 최대 3회 재시도 (백오프 + Retry-After 존중)
+        // 4) 429(Too Many Requests) 대비: 최대 3회 재시도 (백오프 + Retry-After 존중)
         int maxAttempts = 3;                // 최초 + 재시도 2회
         long baseBackoffMs = 500;           // 0.5s → 1.0s → (최대) 2.0s
         HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            // ⚠️ 리미터를 루프 '안'에서 부른다.
+            //    예전에는 루프 밖에 한 번만 있어서, 재시도 2회는 차례를 예약하지 않고 나갔다.
+            //    즉 한 번의 searchLocal이 슬롯 1개만 잡고 외부 호출은 최대 3번 할 수 있었다.
+            //    429를 받고 다시 부르는 상황은 이미 네이버가 "너무 많다"고 말한 상태다.
+            //    그때야말로 간격을 지켜야 한다.
+            enforceMinInterval();
             try {
                 localSearchCalls.increment();   // 재시도도 실제로 나간 호출이므로 시도마다 센다
                 ResponseEntity<Map> res = restTemplate.exchange(uri, HttpMethod.GET, httpEntity, Map.class);
@@ -399,15 +465,64 @@ public class NaverApiClient {
         return (int) (localSearchCache.size() + reverseGeocodeCache.size());
     }
 
-    // 외부 호출 최소 간격 보장 (아주 단순한 방식)
+    /**
+     * 외부 호출 차례가 올 때까지 기다린다.
+     *
+     * <h3>동작</h3>
+     * <pre>
+     * 1. updateAndGet으로 "내 차례"를 원자적으로 예약한다.
+     *    여러 스레드가 동시에 들어와도 각자 다른 시각을 받는다.
+     *      스레드 A → 1000ms   (지금 비어 있으니 바로)
+     *      스레드 B → 1200ms   (A 뒤에 줄 섬)
+     *      스레드 C → 1400ms
+     * 2. 예약한 시각까지 잔다. <b>잠그지 않은 채로</b> 잔다.
+     *    synchronized였다면 자는 동안 다른 스레드가 예약조차 못 한다.
+     * </pre>
+     *
+     * <p>{@code updateAndGet}은 실패하면 다시 시도하는 CAS 루프다.
+     * 읽기·계산·쓰기가 한 덩어리로 원자적이므로 예전처럼 값이 겹치지 않는다.
+     *
+     * @throws ApiException 예상 대기가 상한을 넘거나, 기다리는 중에 인터럽트되면
+     */
     private void enforceMinInterval() {
-        long now = System.currentTimeMillis();
-        long last = lastCallAt.get();
-        long elapsed = now - last;
-        if (elapsed < MIN_INTERVAL_MS) {
-            sleepSilently(MIN_INTERVAL_MS - elapsed);
+        final long now = System.nanoTime();
+        final long intervalNanos = minIntervalMs * 1_000_000L;
+
+        // 내 차례를 예약한다. 이 한 줄이 원자적이라는 것이 이 구현의 전부다.
+        //   · 앞이 비어 있으면 지금(now)
+        //   · 아니면 직전 차례 + 최소 간격
+        //
+        // Math.max(now, prev)로 과거를 끌어올린다. 이게 없으면 한동안 호출이 없었을 때
+        // 밀린 차례가 한꺼번에 몰려 나간다(버스트).
+        long mySlotNanos =
+                nextSlotAtNanos.updateAndGet(prev -> Math.max(now, prev) + intervalNanos) - intervalNanos;
+
+        long waitMs = (mySlotNanos - now) / 1_000_000L;
+        if (waitMs <= 0) return;   // 내 차례가 이미 지났다. 바로 나간다.
+
+        if (waitMs > maxWaitMs) {
+            // 이미 너무 밀렸다. 여기서 기다려 봐야 클라이언트는 떠난 뒤다.
+            // 스레드를 붙잡고 있느니 빨리 실패하는 편이 낫다.
+            //
+            // ⚠️ 예약은 되돌리지 않는다. 되돌리려면 다시 CAS 경쟁을 해야 하고,
+            //    그 사이 뒤 스레드가 이미 그 뒤에 줄을 서 있어 구멍이 생긴다.
+            //    빈 슬롯 하나가 생길 뿐이며, 이는 "덜 부르는" 쪽이라 안전한 방향이다.
+            log.warn("[NAVER][RATE-LIMIT] 대기 {}ms > 상한 {}ms — 요청을 거절한다", waitMs, maxWaitMs);
+            rateLimitRejections.increment();
+            throw new ApiException(ErrorCode.RATE_LIMITED,
+                    "지도 검색 요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         }
-        lastCallAt.set(System.currentTimeMillis());
+
+        rateLimitWaitTimer.record(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+
+        try {
+            Thread.sleep(waitMs);
+        } catch (InterruptedException e) {
+            // 인터럽트를 삼키면 호출자가 취소 요청을 알 수 없다.
+            // 플래그를 되살리고 이 요청은 실패시킨다.
+            Thread.currentThread().interrupt();
+            throw new ApiException(ErrorCode.RATE_LIMITED, "지도 검색이 취소되었습니다.");
+        }
     }
 
     private static Optional<Long> parseRetryAfterToMillis(HttpHeaders headers) {

@@ -84,7 +84,7 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform {
-		excludeTags 'performance', 'map-cache-performance', 'postgres-concurrency'
+		excludeTags 'performance', 'map-cache-performance', 'rate-limit-measurement', 'postgres-concurrency'
 	}
 }
 
@@ -119,6 +119,19 @@ tasks.register('mapCacheMeasurement', Test) {
 	group = 'verification'
 	useJUnitPlatform {
 		includeTags 'map-cache-performance'
+	}
+	testLogging {
+		events 'passed', 'failed'
+		showStandardStreams = true
+	}
+	shouldRunAfter tasks.named('test')
+}
+
+tasks.register('rateLimitMeasurement', Test) {
+	description = 'Measures external call rate under concurrency 1/4/8/16.'
+	group = 'verification'
+	useJUnitPlatform {
+		includeTags 'rate-limit-measurement'
 	}
 	testLogging {
 		events 'passed', 'failed'
