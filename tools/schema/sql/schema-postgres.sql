@@ -20,8 +20,18 @@
 --    엔티티를 고친 뒤 위 명령으로 다시 뽑아라.
 --
 -- 적용:
---   Supabase 대시보드 → SQL Editor 에 붙여넣기
---   또는 psql "postgresql://...:6543/postgres" -f tools/schema/sql/schema-postgres.sql
+--   Supabase 대시보드 → SQL Editor 에 붙여넣기 (가장 간단)
+--   또는 Session pooler 로 psql:
+--     psql "postgresql://postgres.uzdzvqmqfqvltchmlxwl@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres" \
+--          -f tools/schema/sql/schema-postgres.sql
+--
+--   ⚠️ 직결 주소(db.<ref>.supabase.co)는 쓰지 마라. IPv4 주소가 없다(IPv6 전용).
+--      기본 VPC 의 EC2 에는 IPv6 가 없어 붙지 않는다. 실측:
+--        db.<ref>.supabase.co                    → IPv6 만
+--        aws-0-ap-northeast-2.pooler.supabase.com → IPv4 3개, 5432/6543 열림
+--
+--   ⚠️ Transaction pooler(6543) 말고 Session pooler(5432) 를 쓴다.
+--      Transaction 모드는 prepared statement 를 유지하지 않아 JPA/Hibernate 와 궁합이 나쁘다.
 --
 -- 적용 후 확인:
 --   SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename;
