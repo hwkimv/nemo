@@ -55,53 +55,25 @@ jobs:
 
       # 비밀값은 저장소에 없다. 배포 직전에 존재 여부만 확인한다.
       # 값은 절대 출력하지 않는다. (CS 03 에서 토큰 로그를 지운 것과 같은 기준)
-      # ⚠️ AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 를 뺐다.
+      # ⚠️ 런타임 secret 을 여기서 검사하지 않는다.
       #
+      # 예전에는 DB_URL / DB_USER / DB_PASSWORD / JWT_SECRET 이 설정됐는지 확인했다.
+      # 그런데 이 워크플로는 그 값을 쓰지 않는다 — 이미지 빌드와 push 만 한다.
+      # 실제 주입은 EC2 의 /home/ec2-user/nemo.env 에서 일어난다.
+      #
+      # 쓰지도 않는 DB 비밀번호와 JWT Secret 을 GitHub 가 들고 있을 이유가 없다.
+      # 자격증명은 필요한 곳에만 두는 편이 유출 반경이 작다.
+      # 자동 배포를 붙여 실제로 필요해지면 그때 추가한다.
+      #
+      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 도 마찬가지로 없다.
       # EC2 가 IAM Role(nemo-ec2-profile → nemo-ec2-role)로 S3 에 붙는다.
-      # 배포 파이프라인이 AWS 키를 알 필요가 없다.
-      #
-      # 오히려 이 값을 넣으면 해가 된다. S3Config 는 키가 있으면
-      # StaticCredentialsProvider 로 분기하므로, 키를 주는 순간
+      # 오히려 이 값을 주면 S3Config 가 정적 키 분기를 타서
       # 인스턴스 프로파일을 쓰지 않게 된다.
       #
       # 실측(2026-08-21, i-09349eef8ccabedb7):
       #   EC2 안 AWS_ACCESS_KEY 환경변수 0개
       #   IMDSv2 → nemo-ec2-role, S3 Get/Put/Delete/List 성공
       #   ListAllMyBuckets 은 AccessDenied (최소 권한 확인)
-      - name: 필수 secret 설정 확인
-        env:
-          DB_URL: ${{ secrets.DB_URL }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-        run: |
-          # 없으면 앱이 기동조차 못 하는 값. 하나라도 빠지면 배포를 막는다.
-          missing=0
-          for name in DB_URL DB_USER DB_PASSWORD JWT_SECRET; do
-            # 값이 아니라 "설정됐는지" 여부만 본다
-            if [ -z "$(printenv "$name")" ]; then
-              echo "::error::GitHub Secrets 에 $name 이 없습니다"
-              missing=1
-            else
-              echo "  ok  $name"
-            fi
-          done
-
-          # SENTRY_DSN 은 없어도 앱이 돈다.
-          # application.yml 이 ${SENTRY_DSN:} 로 빈 기본값을 주고,
-          # DSN 이 비면 SDK 가 비활성 상태로 동작한다.
-          #
-          # 그래서 배포를 막지는 않는다. 오류 추적이 없다고 서비스를 못 띄울 이유는 없다.
-          # 다만 조용히 넘기지도 않는다 — 운영에서 예외가 나도 아무도 모르는 상태가 된다.
-          if [ -z "$SENTRY_DSN" ]; then
-            echo "::warning::SENTRY_DSN 이 없습니다. 오류 추적 없이 배포됩니다."
-            echo "  warn  SENTRY_DSN (미설정 — Sentry 비활성)"
-          else
-            echo "  ok    SENTRY_DSN"
-          fi
-
-          exit $missing
 
   push-image:
     name: 이미지 push

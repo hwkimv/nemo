@@ -41,14 +41,24 @@ public class S3Config {
     /**
      * 자격증명을 어디서 가져올지 고른다.
      *
-     * <h3>왜 두 갈래인가</h3>
+     * <h3>세 갈래로 나눈다</h3>
      * <ul>
-     *   <li><b>키가 비어 있으면</b> {@link DefaultCredentialsProvider} —
-     *       EC2 인스턴스 프로파일, ECS TaskRole, 환경변수, {@code ~/.aws} 순으로 찾는다.
-     *       AWS 위에서 돌 때 이 방식을 쓴다.</li>
-     *   <li><b>키가 있으면</b> 그 키를 쓴다. LocalStack(test/test)과
-     *       AWS 밖에서 도는 환경이 여기에 해당한다.</li>
+     *   <li><b>둘 다 비어 있으면</b> {@link DefaultCredentialsProvider} —
+     *       EC2 인스턴스 프로파일, ECS TaskRole 순으로 찾는다. AWS 위에서 도는 경우다.</li>
+     *   <li><b>둘 다 있으면</b> 그 키를 쓴다. LocalStack(test/test)과 AWS 밖 실행이다.</li>
+     *   <li><b>하나만 있으면 즉시 실패시킨다.</b></li>
      * </ul>
+     *
+     * <h3>왜 반쪽 설정을 그냥 넘기지 않는가</h3>
+     * 예전에는 "둘 다 있을 때만 정적 키, 그 외는 Role" 이었다.
+     * 그러면 {@code AWS_ACCESS_KEY} 만 넣고 {@code AWS_SECRET_KEY} 를 빠뜨린 설정 실수가
+     * <b>조용히 DefaultCredentialsProvider 로 넘어간다.</b>
+     *
+     * <p>개발자 PC 라면 그 다음 순서인 {@code ~/.aws} 를 뒤져
+     * <b>의도하지 않은 다른 AWS 계정과 버킷에 붙을 수 있다.</b>
+     * 사진을 엉뚱한 버킷에 쓰고도 성공한 것처럼 보인다.
+     *
+     * <p>설정 실수는 조용히 다른 동작으로 넘어가는 것보다 기동 시점에 터지는 편이 낫다.
      *
      * <h3>왜 IAM Role이 나은가</h3>
      * 장기 Access Key는 <b>한 번 새면 직접 폐기하기 전까지 계속 유효</b>하다.
@@ -61,9 +71,19 @@ public class S3Config {
      * 정적 키를 넣는 것 말고는 방법이 없는 구조였다.
      */
     private AwsCredentialsProvider credentialsProvider() {
-        boolean hasStaticKey = accessKey != null && !accessKey.isBlank()
-                && secretKey != null && !secretKey.isBlank();
-        if (hasStaticKey) {
+        boolean hasAccess = accessKey != null && !accessKey.isBlank();
+        boolean hasSecret = secretKey != null && !secretKey.isBlank();
+
+        if (hasAccess != hasSecret) {
+            throw new IllegalStateException(
+                    "S3 자격증명 설정이 반쪽입니다. app.s3.accessKey 와 app.s3.secretKey 는 "
+                            + "둘 다 있거나 둘 다 없어야 합니다. "
+                            + "(accessKey=" + (hasAccess ? "있음" : "없음")
+                            + ", secretKey=" + (hasSecret ? "있음" : "없음") + ") "
+                            + "IAM Role 을 쓰려면 둘 다 비우십시오.");
+        }
+
+        if (hasAccess) {
             log.info("[S3] 정적 Access Key로 인증한다 (LocalStack 또는 AWS 밖 실행)");
             return StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey));
         }

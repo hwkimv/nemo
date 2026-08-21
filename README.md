@@ -32,7 +32,7 @@
 | 동시성 검증 | 동시 업로드가 저장 한도를 넘던 문제 (**26장 → 20장**) | [CS 09](docs/case-studies/09-concurrency.md) |
 | S3↔DB 정합성 | 트랜잭션이 못 막는 불일치 **3가지 재현** → 보상 처리 + DB 기반 재시도 (인프라 추가 0) | [CS 10](docs/case-studies/10-storage-consistency.md) |
 | 외부 API 레이트 리미터 | 동시 요청에서 무력하던 리미터 (**74.0 → 5.0 req/s**, 목표 5.0) | [CS 11](docs/case-studies/11-rate-limiter-concurrency.md) |
-| AWS 배포와 장애 실험 | EC2 1대 운영. 정적 키 → IAM Role, **DB 전체 인터넷 노출 차단**, 앱 중단 **24.7초** 실측 | [CS 12](docs/case-studies/12-cloud-operation.md) |
+| AWS 배포와 장애 실험 | EC2 1대 운영. 정적 키 → IAM Role, **anon 전체 테이블 접근 권한 차단**, 앱 중단 **24.7초** 실측 | [CS 12](docs/case-studies/12-cloud-operation.md) |
 | 자동 회귀 테스트 | 전체 **185개**, 실패·오류·skip 0 | [CS 01](docs/case-studies/01-jwt-authentication.md), [AlbumPhoto·PhotoTag](docs/album-photo-photo-tag-implementation.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 | 앨범 사진 순서·친구 위치 태그 | `AlbumPhoto` 순서 영속화, `PhotoTag` 생성·조회·삭제와 권한 검증 | [구현 근거](docs/album-photo-photo-tag-implementation.md) |
@@ -159,7 +159,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 돌려보며 드러난 결함 5건 |
 | 08 | [Sentry를 붙였는데 이벤트가 0건이었다](docs/case-studies/08-sentry.md) | 전역 핸들러가 삼키던 예외. 정상 상황이 500이던 문제 |
-| 12 | [배포할 곳이 없던 서비스를 AWS에 올리고 일부러 망가뜨려 보기](docs/case-studies/12-cloud-operation.md) | EC2 1대 배포. 정적 키 → IAM Role, DB 전체 노출 차단, 장애 3종 실측 |
+| 12 | [배포할 곳이 없던 서비스를 AWS에 올리고 일부러 망가뜨려 보기](docs/case-studies/12-cloud-operation.md) | EC2 1대 배포. 정적 키 → IAM Role, anon 접근 권한 차단, 장애 3종 실측 |
 | 11 | [AtomicLong을 썼는데 동시 요청에서 막지 못한 리미터](docs/case-studies/11-rate-limiter-concurrency.md) | 외부 API 호출률 동시 16건 **74.0 → 5.0 req/s**. CAS 슬롯 예약, 의존성 추가 0 |
 | 10 | [DB 트랜잭션이 지켜주지 못하는 경계](docs/case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지를 테스트로 재현. 보상 처리 + DB 기반 재시도로 복구 |
 | 09 | [unique 제약이 지켜주지 않는 조건 하나](docs/case-studies/09-concurrency.md) | 깨지는 것을 먼저 증명하고 고친 동시성 결함 |

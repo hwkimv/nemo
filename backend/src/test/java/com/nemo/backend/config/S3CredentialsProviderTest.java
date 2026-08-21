@@ -8,6 +8,7 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * S3 자격증명을 어디서 가져오는지 고정한다.
@@ -48,11 +49,21 @@ class S3CredentialsProviderTest {
     }
 
     @Test
-    @DisplayName("한쪽만 있으면 정적 키로 보지 않는다")
-    void partialKeysFallBackToIamRole() {
-        assertThat(providerFor("only-access-key", ""))
-                .as("반쪽짜리 키로 인증하려다 실패하는 것보다 Role을 찾는 편이 낫다")
-                .isInstanceOf(DefaultCredentialsProvider.class);
-        assertThat(providerFor("", "only-secret")).isInstanceOf(DefaultCredentialsProvider.class);
+    @DisplayName("한쪽만 있으면 기동 시점에 실패한다")
+    void partialKeysFailFast() {
+        // 예전에는 조용히 DefaultCredentialsProvider 로 넘어갔다.
+        // 그러면 개발자 PC 에서 ~/.aws 를 뒤져 의도하지 않은 계정·버킷에 붙을 수 있다.
+        // 사진을 엉뚱한 버킷에 쓰고도 성공한 것처럼 보인다.
+        assertThatThrownBy(() -> providerFor("only-access-key", ""))
+                .as("설정 실수는 조용히 다른 동작으로 넘어가는 것보다 기동 시점에 터지는 편이 낫다")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("반쪽")
+                .hasMessageContaining("accessKey=있음")
+                .hasMessageContaining("secretKey=없음");
+
+        assertThatThrownBy(() -> providerFor("", "only-secret"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("accessKey=없음")
+                .hasMessageContaining("secretKey=있음");
     }
 }

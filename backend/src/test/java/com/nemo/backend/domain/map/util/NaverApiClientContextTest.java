@@ -36,22 +36,9 @@ class NaverApiClientContextTest {
         assertThat(naverApiClient).isNotNull();
     }
 
-    /**
-     * 지도 키가 없어도 애플리케이션이 뜨는지 확인한다.
-     *
-     * <p>예전에는 {@code @Value("${NAVER_LOCAL_CLIENT_ID}")} 에 기본값이 없어서
-     * 키 4개 중 하나만 빠져도 컨텍스트 생성이 실패했다.
-     * <b>지도 하나 때문에 앨범·타임라인·인증까지 전부 뜨지 않았다.</b>
-     *
-     * <p>S3PhotoStorage 와 같은 기준이다(CS 05) — 외부 의존성의 장애 범위를
-     * 그 기능으로 좁히고, 서비스 전체를 죽이지 않는다.
-     */
-    @Test
-    void startsEvenWithoutMapCredentials() {
-        // 이 테스트 클래스의 @TestPropertySource 는 키를 넣어 준다.
-        // 키가 없는 경우는 아래 별도 컨텍스트에서 확인한다.
-        assertThat(naverApiClient).isNotNull();
-    }
+    // 지도 키 없이 기동하는 동작은 NaverApiClientNoCredentialsTest 가 검증한다.
+    // 여기에도 같은 이름의 테스트를 뒀었는데, 이 클래스는 @TestPropertySource 로
+    // 키를 넣어 주므로 이름과 실제로 검사하는 것이 달랐다. 지웠다.
 
     @Test
     void springWiresTwoIndependentCaches() {
