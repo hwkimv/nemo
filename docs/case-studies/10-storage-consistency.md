@@ -397,7 +397,7 @@ Grafana 대시보드에 「S3 파일 정리」 행으로 3패널을 추가했습
 - **`storage_cleanup_task`가 무한히 커집니다.** `COMPLETED` 행을 지우는 정리가 없습니다.
   SQL 파일에 삭제 쿼리를 주석으로 남겼지만 자동화하지 않았습니다.
 - **마이그레이션 도구가 없습니다.** prod는 `ddl-auto=validate`라 배포 전에
-  `tools/storage/sql/storage-cleanup-task.sql`을 **수동으로** 적용해야 합니다.
+  `tools/schema/sql/schema-postgres.sql`을 **수동으로** 적용해야 합니다.
   적용하지 않으면 애플리케이션이 기동하지 않습니다.
 - **워커가 인스턴스마다 돕니다.** 지금은 인스턴스가 1개라 문제없고, 여러 개가 돼도
   행 잠금이 중복 처리를 막습니다. 다만 모든 인스턴스가 같은 테이블을 폴링합니다.
@@ -429,6 +429,6 @@ Grafana 대시보드에 「S3 파일 정리」 행으로 3패널을 추가했습
 
 - 재현·검증 테스트: `PhotoStorageConsistencyTest`, `StorageCleanupRecoveryTest`
 - 실패 주입 도구: `FakePhotoStorage`
-- 운영 DDL: `tools/storage/sql/storage-cleanup-task.sql`
+- 운영 DDL: `tools/schema/sql/schema-postgres.sql` (자동 생성) · 점검 쿼리: `tools/storage/sql/storage-cleanup-task.sql`
 - 관련: [CS 09 — unique 제약이 지켜주지 않는 조건 하나](09-concurrency.md),
   [CS 06 — 지표를 붙이고 나서 알게 된 것](06-monitoring.md)
