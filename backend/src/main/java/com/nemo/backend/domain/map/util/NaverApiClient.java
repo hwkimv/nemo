@@ -487,31 +487,51 @@ public class NaverApiClient {
     private void enforceMinInterval() {
         final long now = System.nanoTime();
         final long intervalNanos = minIntervalMs * 1_000_000L;
+        final long maxWaitNanos = maxWaitMs * 1_000_000L;
 
-        // 내 차례를 예약한다. 이 한 줄이 원자적이라는 것이 이 구현의 전부다.
-        //   · 앞이 비어 있으면 지금(now)
-        //   · 아니면 직전 차례 + 최소 간격
+        // ───────────────────────────────────────────────────────────────
+        // 차례를 예약한다. updateAndGet 대신 compareAndSet 루프를 직접 쓴다.
         //
-        // Math.max(now, prev)로 과거를 끌어올린다. 이게 없으면 한동안 호출이 없었을 때
-        // 밀린 차례가 한꺼번에 몰려 나간다(버스트).
-        long mySlotNanos =
-                nextSlotAtNanos.updateAndGet(prev -> Math.max(now, prev) + intervalNanos) - intervalNanos;
+        // updateAndGet은 "무조건 갱신"이라 조건을 끼워 넣을 수 없다.
+        // 그래서 예전 구현은 <b>거절할 요청도 일단 슬롯을 예약</b>했다.
+        // 외부 API를 부르지도 않으면서 차례만 미래로 밀어 버린 것이다(유령 슬롯).
+        //
+        // 실측(상한 1s, 간격 200ms, 요청 20건):
+        //   실제 호출 6회 → 예약은 1,200ms까지만 밀려야 정상
+        //   그런데 3,981ms까지 밀렸다. 유령 슬롯 2,781ms(= 거절 14건 × 200ms).
+        //   그 결과 부하가 멈춘 뒤 들어온 정상 요청까지 거절됐다.
+        //   아무도 네이버를 부르지 않는데 사용자만 429를 받는 상태다.
+        //
+        // 지금은 상한을 넘으면 <b>CAS를 하지 않고</b> 빠져나간다.
+        // 슬롯은 실제로 호출할 요청만 소비한다.
+        // ───────────────────────────────────────────────────────────────
+        long waitNanos;
+        while (true) {
+            long prev = nextSlotAtNanos.get();
+            // Math.max로 과거를 끌어올린다. 이게 없으면 한동안 호출이 없었을 때
+            // 밀린 차례가 한꺼번에 몰려 나간다(버스트).
+            long mySlot = Math.max(now, prev);
+            waitNanos = mySlot - now;
 
-        long waitMs = (mySlotNanos - now) / 1_000_000L;
-        if (waitMs <= 0) return;   // 내 차례가 이미 지났다. 바로 나간다.
+            if (waitNanos > maxWaitNanos) {
+                // 예약하지 않고 거절한다. 이 요청은 차례를 소비하지 않는다.
+                log.warn("[NAVER][RATE-LIMIT] 대기 {}ms > 상한 {}ms — 슬롯을 쓰지 않고 거절한다",
+                        waitNanos / 1_000_000L, maxWaitMs);
+                rateLimitRejections.increment();
+                throw new ApiException(ErrorCode.RATE_LIMITED,
+                        "지도 검색 요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            }
 
-        if (waitMs > maxWaitMs) {
-            // 이미 너무 밀렸다. 여기서 기다려 봐야 클라이언트는 떠난 뒤다.
-            // 스레드를 붙잡고 있느니 빨리 실패하는 편이 낫다.
-            //
-            // ⚠️ 예약은 되돌리지 않는다. 되돌리려면 다시 CAS 경쟁을 해야 하고,
-            //    그 사이 뒤 스레드가 이미 그 뒤에 줄을 서 있어 구멍이 생긴다.
-            //    빈 슬롯 하나가 생길 뿐이며, 이는 "덜 부르는" 쪽이라 안전한 방향이다.
-            log.warn("[NAVER][RATE-LIMIT] 대기 {}ms > 상한 {}ms — 요청을 거절한다", waitMs, maxWaitMs);
-            rateLimitRejections.increment();
-            throw new ApiException(ErrorCode.RATE_LIMITED,
-                    "지도 검색 요청이 몰려 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            if (nextSlotAtNanos.compareAndSet(prev, mySlot + intervalNanos)) {
+                break;   // 내 차례를 확보했다
+            }
+            // CAS 실패 = 그 사이 다른 스레드가 먼저 예약했다. 다시 읽고 재시도한다.
+            // updateAndGet이 내부에서 하는 일과 같다. 조건 검사만 우리가 넣었을 뿐이다.
+            Thread.onSpinWait();
         }
+
+        long waitMs = waitNanos / 1_000_000L;
+        if (waitMs <= 0) return;   // 내 차례가 이미 지났다. 바로 나간다.
 
         rateLimitWaitTimer.record(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS);
 
