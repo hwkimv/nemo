@@ -22,6 +22,7 @@
 | 09 | [unique 제약이 지켜주지 않는 조건 하나](case-studies/09-concurrency.md) | 동시 업로드로 저장 한도 초과 (26장 → 20장) | `Verified` |
 | 10 | [DB 트랜잭션이 지켜주지 못하는 경계](case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지 재현. 보상 처리 + DB 기반 재시도 | `Verified` |
 | 11 | [AtomicLong을 썼는데 동시 요청에서 막지 못한 리미터](case-studies/11-rate-limiter-concurrency.md) | 동시 16건 **74.0 → 5.0 req/s**. AI 보조 워크플로우 적용 | `Verified` |
+| 12 | [배포할 곳이 없던 서비스를 AWS에 올리고 일부러 망가뜨려 보기](case-studies/12-cloud-operation.md) | EC2 배포 · IAM Role · DB 노출 차단 · 장애 3종 실측 | `Verified` |
 
 ---
 
