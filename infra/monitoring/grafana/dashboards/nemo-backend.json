@@ -543,7 +543,7 @@
       "description": "캐시 miss와 1:1이 아니다. 429 재시도가 붙으면 miss 1건에 호출이 여러 번 나가고, 캐시를 끄면 miss 지표 자체가 사라진다. 캐시 효과는 적중률이 아니라 '밖으로 몇 번 나갔는가'로 확인해야 하므로 호출하는 자리에서 직접 센다.",
       "gridPos": {
         "h": 6,
-        "w": 16,
+        "w": 8,
         "x": 0,
         "y": 36
       },
@@ -684,6 +684,89 @@
           "refId": "A",
           "expr": "sum by (result) (rate(storage_cleanup_tasks_total{job=\"nemo-backend\"}[5m]))",
           "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "레이트 리미터 대기 시간",
+      "description": "외부 호출 차례를 기다린 시간. 호출 수(naver_api_calls)만으로는 '제한이 걸렸는지'를 알 수 없다. 이 값이 오르면 동시 요청이 몰려 뒤로 밀리고 있다는 뜻이고, max-wait 상한에 가까워지면 거절이 시작된다.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "noValue": "0",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(naver_api_rate_limit_wait_seconds_sum{job=\"nemo-backend\"}[5m]) / clamp_min(rate(naver_api_rate_limit_wait_seconds_count{job=\"nemo-backend\"}[5m]), 0.0001)",
+          "legendFormat": "평균 대기"
+        },
+        {
+          "refId": "B",
+          "expr": "naver_api_rate_limit_wait_seconds_max{job=\"nemo-backend\"}",
+          "legendFormat": "최대 대기"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "리미터 거절 (5분)",
+      "description": "대기 상한(max-wait-ms)을 넘겨 429로 거절한 요청 수. 0이 아니면 지도 요청이 상한보다 빠르게 들어오고 있다는 뜻이다. 계속 오르면 min-interval을 늘릴지, 뷰포트당 호출 수를 더 줄일지, 상한을 올릴지 판단해야 한다.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(naver_api_rate_limit_rejections_total{job=\"nemo-backend\"}[5m]))",
+          "legendFormat": "거절"
         }
       ]
     }

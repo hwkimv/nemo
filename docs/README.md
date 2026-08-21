@@ -21,6 +21,7 @@
 | 08 | [Sentry를 붙였는데 이벤트가 0건이었다](case-studies/08-sentry.md) | 중복 친구 요청 500 → 409. 토큰 스크러빙 검증 | `Verified` |
 | 09 | [unique 제약이 지켜주지 않는 조건 하나](case-studies/09-concurrency.md) | 동시 업로드로 저장 한도 초과 (26장 → 20장) | `Verified` |
 | 10 | [DB 트랜잭션이 지켜주지 못하는 경계](case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지 재현. 보상 처리 + DB 기반 재시도 | `Verified` |
+| 11 | [AtomicLong을 썼는데 동시 요청에서 막지 못한 리미터](case-studies/11-rate-limiter-concurrency.md) | 동시 16건 **74.0 → 5.0 req/s**. AI 보조 워크플로우 적용 | `Verified` |
 
 ---
 
@@ -41,6 +42,15 @@
 **재현 도구**는 `tools/`에 있습니다 — k6 스크립트, 시드 SQL, 실행 계획 SQL, 인덱스 SQL,
 네이버 API 스텁·실제 API 프로브(`tools/performance/`), Sentry 수집 스텁(`tools/observability/`),
 S3 정리 테이블 DDL(`tools/storage/sql/`).
+
+---
+
+## AI 보조 개발 워크플로우
+
+| 문서 | 내용 |
+|---|---|
+| [AI 보조 개발 워크플로우](ai-development-workflow.md) | 분석 → 재현 → 대안 → **사람의 결정** → 구현 → 측정 → 독립 리뷰 |
+| [재사용 프롬프트](../prompts/engineering/) | `analyze-problem` / `implement-fix` / `review-pr` |
 
 ---
 

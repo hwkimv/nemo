@@ -31,7 +31,8 @@
 | Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
 | 동시성 검증 | 동시 업로드가 저장 한도를 넘던 문제 (**26장 → 20장**) | [CS 09](docs/case-studies/09-concurrency.md) |
 | S3↔DB 정합성 | 트랜잭션이 못 막는 불일치 **3가지 재현** → 보상 처리 + DB 기반 재시도 (인프라 추가 0) | [CS 10](docs/case-studies/10-storage-consistency.md) |
-| 자동 회귀 테스트 | 전체 **173개**, 실패·오류·skip 0 | [CS 01](docs/case-studies/01-jwt-authentication.md), [AlbumPhoto·PhotoTag](docs/album-photo-photo-tag-implementation.md) |
+| 외부 API 레이트 리미터 | 동시 요청에서 무력하던 리미터 (**74.0 → 5.0 req/s**, 목표 5.0) | [CS 11](docs/case-studies/11-rate-limiter-concurrency.md) |
+| 자동 회귀 테스트 | 전체 **185개**, 실패·오류·skip 0 | [CS 01](docs/case-studies/01-jwt-authentication.md), [AlbumPhoto·PhotoTag](docs/album-photo-photo-tag-implementation.md) |
 | PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
 | 앨범 사진 순서·친구 위치 태그 | `AlbumPhoto` 순서 영속화, `PhotoTag` 생성·조회·삭제와 권한 검증 | [구현 근거](docs/album-photo-photo-tag-implementation.md) |
 
@@ -157,6 +158,7 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 돌려보며 드러난 결함 5건 |
 | 08 | [Sentry를 붙였는데 이벤트가 0건이었다](docs/case-studies/08-sentry.md) | 전역 핸들러가 삼키던 예외. 정상 상황이 500이던 문제 |
+| 11 | [AtomicLong을 썼는데 동시 요청에서 막지 못한 리미터](docs/case-studies/11-rate-limiter-concurrency.md) | 외부 API 호출률 동시 16건 **74.0 → 5.0 req/s**. CAS 슬롯 예약, 의존성 추가 0 |
 | 10 | [DB 트랜잭션이 지켜주지 못하는 경계](docs/case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지를 테스트로 재현. 보상 처리 + DB 기반 재시도로 복구 |
 | 09 | [unique 제약이 지켜주지 않는 조건 하나](docs/case-studies/09-concurrency.md) | 깨지는 것을 먼저 증명하고 고친 동시성 결함 |
 
@@ -246,6 +248,9 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 
 포트폴리오 문서가 실제보다 앞서 나가지 않도록, 현재 확인되지 않은 것을 적어 둡니다.
 
+- **외부 API 레이트 리미터는 JVM 안에서만 유효합니다.** 인스턴스가 2개면 네이버가 보는 호출률은 2배가 됩니다. Redis 분산 리미터는 인스턴스가 실제로 늘고 쿼터가 공유될 때 검토합니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
+- **`min-interval-ms=200`의 근거가 약합니다.** 네이버가 공표한 쿼터가 아니라 기존 코드에 있던 값을 설정으로 옮긴 것입니다. 실제 허용치 확인이 필요합니다.
+- **리미터가 보장하는 것은 장기 평균 호출률입니다.** 어떤 1초 구간에서도 5회 이하라는 strict sliding window는 보장하지 않습니다. GC·스케줄링 지연으로 호출이 뭉칠 수 있습니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **기존에 쌓인 S3 고아 객체는 그대로입니다.** 이번 정합성 작업은 앞으로 생기는 것을 막을 뿐입니다. 과거 것을 찾으려면 S3 객체 목록과 DB를 대조하는 별도 작업이 필요합니다. ([CS 10](docs/case-studies/10-storage-consistency.md))
 - **`storage_cleanup_task` 테이블에 보관 정책이 없습니다.** `COMPLETED` 행이 계속 쌓입니다. 삭제 쿼리는 SQL 파일에 주석으로만 있고 자동화하지 않았습니다.
 - **마이그레이션 도구가 없습니다.** prod는 `ddl-auto=validate`라 새 테이블을 배포 전에 `tools/storage/sql/`의 SQL로 **수동 적용**해야 합니다.
