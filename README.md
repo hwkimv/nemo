@@ -253,7 +253,7 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **리미터가 보장하는 것은 장기 평균 호출률입니다.** 어떤 1초 구간에서도 5회 이하라는 strict sliding window는 보장하지 않습니다. GC·스케줄링 지연으로 호출이 뭉칠 수 있습니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **기존에 쌓인 S3 고아 객체는 그대로입니다.** 이번 정합성 작업은 앞으로 생기는 것을 막을 뿐입니다. 과거 것을 찾으려면 S3 객체 목록과 DB를 대조하는 별도 작업이 필요합니다. ([CS 10](docs/case-studies/10-storage-consistency.md))
 - **`storage_cleanup_task` 테이블에 보관 정책이 없습니다.** `COMPLETED` 행이 계속 쌓입니다. 삭제 쿼리는 SQL 파일에 주석으로만 있고 자동화하지 않았습니다.
-- **마이그레이션 도구가 없습니다.** prod는 `ddl-auto=validate`라 배포 전에 `tools/schema/sql/schema-postgres.sql`을 **수동 적용**해야 합니다. (`./gradlew exportPostgresSchema`로 엔티티에서 재생성)
+- **스키마 부트스트랩이 두 갈래입니다.** Flyway가 증분 마이그레이션을 맡지만 base 스키마를 만드는 마이그레이션이 없습니다. 새 DB는 base를 수동 적용한 뒤 Flyway V1이 얹힙니다.
 - **조회 성능만 측정했습니다.** 앨범·타임라인·사진 조회는 Before/After가 있지만, 업로드·QR 경로는 측정하지 않았습니다.
 - **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
 - **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
