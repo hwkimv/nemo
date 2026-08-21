@@ -253,7 +253,7 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **단일 인스턴스 배포입니다. 고가용성이 아닙니다.** EC2 1대이고 인스턴스가 죽으면 24.7초 멈춥니다(Docker 재시작). HTTPS·도메인·로드밸런서·CloudWatch 로그 수집이 없습니다. ([CS 12](docs/case-studies/12-cloud-operation.md))
 - **readiness/liveness 분리가 없습니다.** `/actuator/health` 하나뿐이라 '기동 중'과 'DB 장애'를 구분하지 못합니다. DB 장애 시 health 응답에 30초가 걸립니다.
 - **EC2 배포가 반자동입니다.** 이미지 빌드는 CI가 하지만 EC2 배포 단계는 SSH 수동입니다.
-- **외부 API 레이트 리미터는 JVM 안에서만 유효합니다.** 인스턴스가 2개면 네이버가 보는 호출률은 2배가 됩니다. Redis 분산 리미터는 인스턴스가 실제로 늘고 쿼터가 공유될 때 검토합니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
+- **외부 API 레이트 리미터는 JVM 안에서만 유효합니다.** 인스턴스 2개를 띄워 실측했습니다 — 각각은 5.0 req/s를 정확히 지키는데 **네이버가 받는 합산은 10.0 req/s**입니다. 다만 다중 인스턴스로 갈 때 더 급한 건 리미터가 아니라 **메모리에 있는 비밀번호 재설정 토큰·이메일 인증코드**입니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **`min-interval-ms=200`의 근거가 약합니다.** 네이버가 공표한 쿼터가 아니라 기존 코드에 있던 값을 설정으로 옮긴 것입니다. 실제 허용치 확인이 필요합니다.
 - **리미터가 보장하는 것은 장기 평균 호출률입니다.** 어떤 1초 구간에서도 5회 이하라는 strict sliding window는 보장하지 않습니다. GC·스케줄링 지연으로 호출이 뭉칠 수 있습니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **기존에 쌓인 S3 고아 객체는 그대로입니다.** 이번 정합성 작업은 앞으로 생기는 것을 막을 뿐입니다. 과거 것을 찾으려면 S3 객체 목록과 DB를 대조하는 별도 작업이 필요합니다. ([CS 10](docs/case-studies/10-storage-consistency.md))
