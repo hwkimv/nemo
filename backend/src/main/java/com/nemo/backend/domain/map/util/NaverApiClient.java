@@ -39,10 +39,20 @@ public class NaverApiClient {
     @Value("${naver.openapi.local.endpoint:https://naverapihub.apigw.ntruss.com/search/v1/local}")
     private String endpoint;
 
-    @Value("${NAVER_LOCAL_CLIENT_ID}")
+    // ⚠️ 빈 기본값을 준다. 키가 없어도 애플리케이션은 기동해야 한다.
+    //
+    // 예전에는 기본값이 없어서, 지도 키 4개 중 하나만 빠져도
+    // 컨텍스트 생성이 실패해 앨범·타임라인·인증까지 전부 뜨지 않았다.
+    // 지도 하나 때문에 서비스 전체가 죽는 구조였다.
+    //
+    // S3PhotoStorage 에서 이미 같은 판단을 내렸다(CS 05) —
+    // 스토리지 장애의 영향 범위를 "파일을 다루는 요청"으로 좁히려고
+    // 기동은 계속하고 실제 호출 시점에 실패시킨다.
+    // 지도도 같은 기준을 따른다. 키가 없으면 지도 API 만 401 로 실패한다.
+    @Value("${NAVER_LOCAL_CLIENT_ID:}")
     private String clientId;
 
-    @Value("${NAVER_LOCAL_CLIENT_SECRET}")
+    @Value("${NAVER_LOCAL_CLIENT_SECRET:}")
     private String clientSecret;
 
     // ───────────────────────────────────────────────────────────────
@@ -53,10 +63,10 @@ public class NaverApiClient {
     @Value("${naver.openapi.reverse.endpoint:https://maps.apigw.ntruss.com/map-reversegeocode/v2/gc}")
     private String reverseEndpoint;
 
-    @Value("${NAVER_MAP_CLIENT_ID}")
+    @Value("${NAVER_MAP_CLIENT_ID:}")
     private String mapClientId;
 
-    @Value("${NAVER_MAP_CLIENT_SECRET}")
+    @Value("${NAVER_MAP_CLIENT_SECRET:}")
     private String mapClientSecret;
 
     private final RestTemplate restTemplate;
@@ -166,6 +176,10 @@ public class NaverApiClient {
                 .register(meterRegistry);
 
         log.info("[NAVER][CACHE] {} | {}", localSearchCache.describe(), reverseGeocodeCache.describe());
+
+        // 키가 없어도 기동은 시키되, 조용히 넘어가지는 않는다.
+        // 로그를 안 남기면 "지도가 왜 안 되지"를 한참 뒤에야 알게 된다.
+        warnIfCredentialsMissing();
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -463,6 +477,29 @@ public class NaverApiClient {
      */
     public int cacheSize() {
         return (int) (localSearchCache.size() + reverseGeocodeCache.size());
+    }
+
+    /**
+     * 지도 API 키가 비어 있으면 크게 경고한다.
+     *
+     * <p>키가 없어도 애플리케이션은 뜬다(CS 05 의 판단과 같다).
+     * 다만 그 상태로 조용히 돌면 지도만 401 로 실패하는 이유를 한참 뒤에 알게 된다.
+     * 기동 시점에 한 번 남겨 둔다.
+     */
+    private void warnIfCredentialsMissing() {
+        boolean localMissing = isBlank(clientId) || isBlank(clientSecret);
+        boolean mapMissing = isBlank(mapClientId) || isBlank(mapClientSecret);
+        if (!localMissing && !mapMissing) return;
+
+        log.warn("[NAVER] 지도 API 키가 없습니다 — 지도 기능만 실패합니다. "
+                        + "지역검색 키={}, 지도(역지오코딩) 키={}. "
+                        + "나머지 기능(앨범·타임라인·인증)은 정상 동작합니다.",
+                localMissing ? "없음" : "있음",
+                mapMissing ? "없음" : "있음");
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     /**
