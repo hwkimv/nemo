@@ -38,6 +38,11 @@
 --   → album, album_favorite, album_photos, album_share, friend,
 --     photo_tag, photos, refresh_tokens, storage_cleanup_task, timeline, users
 --
+-- ⚠️ 이 파일을 적용한 직후 반드시 02-revoke-postgrest-exposure.sql 도 적용하라.
+--    Supabase 는 public 스키마를 PostgREST 로 자동 노출한다.
+--    이것만 돌리면 anon 키만으로 users(비밀번호 해시)와
+--    refresh_tokens(세션 토큰)까지 읽고 쓸 수 있는 상태가 된다.
+--
 -- 참고: 조회 성능 인덱스는 별도다 → tools/performance/sql/indexes.sql
 -- ============================================================
 
