@@ -317,7 +317,7 @@ Grafana `http://localhost:3000` (admin / admin) → NEMO 폴더. 앱은 호스�
 cd backend && ./gradlew test
 ```
 
-**192 tests / 실패·오류·skip 0.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**198 tests / 실패·오류·skip 0.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 
