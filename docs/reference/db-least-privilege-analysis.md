@@ -1,7 +1,7 @@
 ---
 title: DB 최소 권한 롤 분리 — 분석
 status: Analysis only (변경 없음)
-date: 2026-08-22
+date: 2026-08-23
 ---
 
 # DB 최소 권한 롤 분리 — 분석
@@ -94,68 +94,96 @@ RLS는 12개 전부 꺼져 있고, 이건 [CS 12](../case-studies/12-cloud-opera
 
 ---
 
-## 3. 세 가지 안
+## 3. 가능한 안 — Flyway 를 어디서 돌릴 것인가가 갈림길입니다
 
-| 기준 | **A. 현행 (`postgres` 단일)** | **B. runtime / migration 분리** | **C. runtime만 분리** |
-|---|---|---|---|
-| 런타임 롤 | `postgres` | `nemo_app` (DML만) | `nemo_app` (DML만) |
-| 마이그레이션 롤 | `postgres` | `nemo_migration` (DDL) | `postgres` 그대로 |
-| 관리할 비밀값 | 1개 | **2개** | 1개 |
-| 앱이 `DROP TABLE` 가능 | **가능** | 불가 | 불가 |
-| Flyway 동작 | 그대로 | **설정 필요** (아래) | 그대로 |
-| 소유권 이전 필요 | — | 필요 | 필요 |
-| 운영 복잡도 | 최소 | **상** | 중 |
-| 되돌리기 | — | 어려움 | 보통 |
-| 실제 얻는 것 | — | 사고 반경 축소 + DDL 분리 | **사고 반경 축소** |
+### 먼저 확인한 제약
 
-### B의 숨은 비용 — Flyway와 소유권
+```yaml
+# application-prod.yml — Flyway 에 별도 자격증명이 없습니다
+spring:
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+```
 
-Flyway는 **런타임 앱과 같은 `DataSource`를 씁니다.** 마이그레이션 롤을 분리하려면
-Spring에 두 번째 `DataSource`를 만들고 `spring.flyway.url/user/password`를 따로 줘야 합니다.
-그러면 **비밀값이 하나 더 늘고**, 그 값은 지금 구조상 `nemo.env`에 평문으로 들어갑니다.
-[CS 12](../case-studies/12-cloud-operation.md)에서 "자격증명은 필요한 곳에만 둔다"고 판단한 것과
-방향이 어긋납니다 — DDL 권한이 있는 비밀값을 **런타임 서버에 상주**시키게 됩니다.
+`spring.flyway.user` / `password` / `url` 이 없으므로 **Flyway 는 `spring.datasource` 를 그대로 씁니다.**
+이 한 줄이 아래 모든 선택지를 결정합니다.
 
-더 큰 문제는 소유권입니다. `nemo_app`이 DDL을 못 하게 하려면 테이블 소유자가
-`nemo_app`이 **아니어야** 합니다. 그런데 지금은 12개 전부 `postgres` 소유이고,
-Flyway가 만든 것도 `postgres` 소유입니다. 옮기려면 `ALTER TABLE ... OWNER TO`를
-전 테이블에 돌려야 하고, **Supabase 관리 롤과의 상호작용을 확인하지 못했습니다.**
+> **`spring.datasource` 를 `nemo_app` 으로 바꾸는 순간 Flyway 도 `nemo_app` 으로 실행됩니다.**
+> DML 전용 롤이면 그 다음 DDL 마이그레이션이 실패하고, 앱이 뜨지 않습니다.
 
-### C가 B보다 나은 이유
+### 그리고 소유권이 두 번째 제약입니다
 
-DDL 권한을 **런타임 서버에서 없애는 것**이 목적의 대부분입니다.
-마이그레이션을 누가 실행하느냐는 그다음 문제입니다.
+PostgreSQL 에서 `ALTER` / `DROP` 은 **소유자(또는 소유 롤의 멤버, 슈퍼유저)만** 할 수 있습니다.
+`GRANT` 로 줄 수 있는 권한이 아닙니다. 지금 12개 테이블은 전부 `postgres` 소유입니다.
 
-지금 배포 구조에서 Flyway는 **앱 기동 시** 돕니다
-(`spring.flyway.enabled: true`, `baseline-on-migrate`). 즉 마이그레이션 롤을
-분리하면 **앱이 스스로 마이그레이션할 수 없게 되고**, 배포 순서가 바뀝니다 —
-"마이그레이션 먼저, 앱 나중"이라는 단계가 새로 생깁니다.
-그건 [배포 스크립트](../../infra/deploy/README.md)를 다시 설계해야 한다는 뜻입니다.
+여기서 두 방향이 갈립니다.
 
-**그 복잡도를 지금 지불할 근거가 없습니다.** 인스턴스 1대, 개발자 1명,
-마이그레이션 1개(`V1`)입니다.
+- **`nemo_app` 이 DDL 을 못 하게 하려면** → 소유권을 `postgres` 에 **그대로 두면 됩니다.** 이전이 필요 없습니다.
+- **`nemo_migration` 이 DDL 을 하게 하려면** → 소유권을 `nemo_migration` 으로 **옮겨야 합니다.**
+
+### 네 가지 안
+
+| 기준 | **A. 현행** | **B. runtime/migration 롤 분리** | **C1. runtime 분리 + Flyway 별도 자격증명** | **C2. runtime 분리 + 마이그레이션 분리 실행** |
+|---|---|---|---|---|
+| 런타임 롤 | `postgres` | `nemo_app` (DML) | `nemo_app` (DML) | `nemo_app` (DML) |
+| 마이그레이션 롤 | `postgres` | `nemo_migration` (DDL) | `postgres` | `postgres` |
+| **런타임 서버에 상주하는 secret** | **1개** | **2개** | **2개** (DDL 권한 포함) | **1개** |
+| Flyway 실행 방식 | 앱 기동 시, 앱 DataSource | 앱 기동 시, **별도 DataSource 필요** | 앱 기동 시, **`spring.flyway.*` 별도 지정** | **앱에서 끔.** 배포 전 별도 단계로 실행 |
+| 테이블 소유권 | `postgres` (그대로) | **`nemo_migration` 으로 이전 필요** | **`postgres` 유지 — 이전 불필요** | **`postgres` 유지 — 이전 불필요** |
+| 앱이 `DROP TABLE` 가능 | **가능** | 불가 | 불가 | 불가 |
+| 배포 영향 | 없음 | 없음 (앱이 계속 마이그레이션) | 없음 (앱이 계속 마이그레이션) | **배포 절차가 바뀜** — "마이그레이션 먼저, 앱 나중" 단계 추가. [배포 스크립트](../../infra/deploy/README.md) 재설계 필요 |
+| 되돌리기 | — | 어려움 (소유권 원복) | 보통 | 보통 |
+| 실제 얻는 것 | — | 사고 반경 축소 + DDL 롤 분리 | **사고 반경 축소** | **사고 반경 축소 + 런타임에 DDL secret 없음** |
+
+### 이전 판의 오류 (2차 리뷰 지적)
+
+처음 이 문서를 쓸 때 C 안을 이렇게 적었습니다.
+
+> ~~runtime = `nemo_app` · migration = `postgres` · **관리 secret 1개** · **Flyway 그대로** · **소유권 이전 필요**~~
+
+**두 군데가 틀렸습니다.**
+
+1. **"secret 1개 + Flyway 그대로"는 동시에 성립하지 않습니다.** Flyway 가 앱 DataSource 를
+   공유하므로, 런타임을 `nemo_app` 으로 바꾸면 Flyway 도 `nemo_app` 이 됩니다.
+   `postgres` 로 계속 돌리려면 자격증명이 하나 더 필요합니다(C1) 또는
+   마이그레이션을 앱에서 떼어내야 합니다(C2). 위 표는 이 둘을 나눠 적었습니다.
+2. **"소유권 이전 필요"는 반대였습니다.** `nemo_app` 에게서 DDL 을 뺏는 방법이
+   **소유권을 `postgres` 에 그대로 두는 것**입니다. 이전이 필요한 쪽은 B 입니다.
+   같은 문서의 SQL 초안에는 "소유권은 `postgres` 에 그대로 둔다"라고 맞게 적혀 있어
+   표와 본문이 서로 어긋나 있었습니다.
 
 ---
 
 ## 4. 추천
 
-> **C안을 권장합니다. 단, 지금 실행하지 않습니다.**
+> **C2 를 권장합니다. 단, 지금 실행하지 않습니다.**
+
+C1 과 C2 는 얻는 보안 이점이 거의 같지만, **런타임 서버에 DDL 권한 secret 을 두느냐**가 다릅니다.
+
+C1 은 `nemo.env` 에 `postgres` 자격증명을 평문으로 상주시킵니다. 그러면
+"런타임에서 DDL 권한을 없앤다"는 목적이 절반만 달성됩니다 — 롤은 나눴는데
+그 롤로 붙을 수 있는 열쇠가 같은 파일에 있습니다.
+[CS 12](../case-studies/12-cloud-operation.md) 에서 "자격증명은 필요한 곳에만 둔다"고 판단한 것과도 어긋납니다.
+
+C2 는 그 secret 이 **마이그레이션을 실행하는 시점에만** 필요합니다.
 
 **왜 지금 안 하는가**
 
-1. **되돌리기가 비쌉니다.** 소유권 이전을 잘못하면 Flyway가 `V1` 이후를 못 얹고,
-   그 상태에서 앱이 안 뜹니다. [CS 12](../case-studies/12-cloud-operation.md)에서 스키마/Flyway 충돌로
-   **컨테이너 재시작 루프**를 이미 한 번 겪었습니다.
-2. **재현 환경이 없습니다.** Supabase 관리 롤이 소유권 이전에 어떻게 반응하는지
-   확인하지 못했습니다. **운영 DB에서 처음 시도하는 것은 안 됩니다.**
-3. **얻는 것이 "피해 반경 축소"이고, 지금 그 사고가 일어날 경로를 찾지 못했습니다.**
-   급하지 않습니다.
+1. **배포 절차가 바뀝니다.** C2 는 "마이그레이션 먼저, 앱 나중" 단계를 새로 만듭니다.
+   지금 막 rollback 을 검증해 둔 배포 스크립트를 다시 설계해야 합니다.
+   이번 작업 범위가 아닙니다.
+2. **재현 환경이 없습니다.** Supabase 관리 롤이 커스텀 롤·소유권과 어떻게 상호작용하는지
+   확인하지 못했습니다. **운영 DB 에서 처음 시도하는 것은 안 됩니다.**
+3. **얻는 것이 "피해 반경 축소"이고, 그 사고가 일어날 경로를 찾지 못했습니다.**
+   위 2절에서 SQL 조립 지점을 전수 확인했고 알려진 인젝션 지점이 없습니다. 급하지 않습니다.
 
 **언제 하는가 — 조건**
 
 - Supabase 브랜치나 별도 프로젝트에서 **전 과정을 한 번 완주**했을 때
-- 또는 `DB_PASSWORD`가 서버 밖(팀원 PC, CI 등)으로 나갈 일이 생겼을 때
-- 또는 SQL을 문자열로 조립하는 코드가 실제로 들어왔을 때
+- 또는 `DB_PASSWORD` 가 서버 밖(팀원 PC, CI 등)으로 나갈 일이 생겼을 때
+- 또는 SQL 을 문자열로 조립하는 코드가 실제로 들어왔을 때
 
 **할 때의 순서 (검증 안 됨 — 초안입니다)**
 
@@ -165,19 +193,32 @@ CREATE ROLE nemo_app LOGIN PASSWORD '<...>';
 GRANT USAGE ON SCHEMA public TO nemo_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO nemo_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO nemo_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+
+-- 소유권은 postgres 에 그대로 둔다.
+-- 이것이 nemo_app 에게서 DROP/ALTER 를 뺏는 방법이다. 이전하면 안 된다.
+
+-- Flyway 가 앞으로 만들 테이블에도 권한이 붙어야 한다.
+-- default privileges 는 '부여한 롤이 만든 객체'에만 적용되므로 FOR ROLE 을 명시한다.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nemo_app;
--- 소유권은 postgres 에 그대로 둔다 → nemo_app 은 DROP/ALTER 를 할 수 없다
--- Flyway 는 계속 postgres 로 돌린다 (C안)
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO nemo_app;
 ```
 
-**확인해야 할 것 (하지 않았습니다)**
+그리고 앱 설정에서 `spring.flyway.enabled: false` 로 바꾸고,
+마이그레이션을 배포 전 단계로 옮깁니다(C2).
 
-- `ALTER DEFAULT PRIVILEGES`가 **Flyway가 앞으로 만들 테이블**에도 걸리는가
-  (Flyway는 `postgres`로 도는데, default privileges는 **부여한 롤이 만든 객체**에만 적용됩니다.
-  `FOR ROLE postgres`를 명시해야 할 가능성이 큽니다)
-- 시퀀스·함수 권한이 빠지지 않았는가
-- pooler 사용자명 형식(`nemo_app.<ref>`)이 커스텀 롤에서도 동작하는가
+---
+
+## 4-1. 아직 검증하지 않은 것
+
+이 문서에서 **확인하지 못한 것**을 그대로 적습니다.
+
+- **`ALTER DEFAULT PRIVILEGES FOR ROLE postgres` 가 실제로 Flyway 산출물에 걸리는지** — 문법상 맞지만 실행해 보지 않았습니다
+- **Supabase 에서 `CREATE ROLE` 이 되는지.** `postgres` 에 `CREATEROLE` 이 있는 것은 확인했지만 실제로 만들어 보지 않았습니다
+- **pooler 사용자명 형식(`nemo_app.<project-ref>`)이 커스텀 롤에서도 동작하는지.** 지금 접속은 `postgres.<ref>` 형식입니다
+- **함수·트리거·확장에 대한 권한**을 훑지 않았습니다. 테이블과 시퀀스만 봤습니다
+- **C2 의 마이그레이션 실행 단계를 어디에 둘지** — 배포 스크립트, CI, 수동 중 무엇이 맞는지 설계하지 않았습니다
 
 ---
 

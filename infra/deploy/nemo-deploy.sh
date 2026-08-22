@@ -44,8 +44,13 @@
 # 종료 코드
 #   0  새 이미지 배포 성공 (readiness 확인됨)
 #   1  새 이미지 실패 → 이전 이미지로 롤백 성공 (서비스는 살아 있음)
-#   2  롤백까지 실패 → 사람이 봐야 함
-#   3  사용법 오류 / 사전 조건 불충족 / 다른 배포가 진행 중
+#   2  롤백까지 실패 → 서비스가 내려가 있을 수 있음. 사람이 봐야 함
+#   3  사용법 오류 / 사전 조건 불충족 / 다른 배포가 진행 중 (서비스 그대로)
+#   4  배포는 성공했으나 last-good 기록 실패
+#      → 새 버전은 정상 실행 중. 다음 배포의 롤백 후보만 갱신되지 않았다
+#
+# 2 와 4 를 나눈 이유: 둘 다 "사람이 봐야 함"이지만 서비스 상태가 정반대다.
+# 하나로 합치면 감시 도구가 정상 서비스를 장애로 읽는다.
 
 set -euo pipefail
 
@@ -110,8 +115,12 @@ T_RECOVER=0      # 서비스가 다시 readiness UP 이 된 시각 = 중단 끝
 #
 # -f 를 쓰지 않는다. -f 는 404 와 503 을 똑같이 exit 22 로 만들어 구분할 수 없다.
 # 상태 코드가 필요하다. 연결 자체가 안 되면 curl 이 000 을 준다.
+# 연결 자체가 안 되면 curl 이 %{http_code} 로 이미 "000" 을 출력하고 non-zero 로 끝난다.
+# 그래서 `|| echo "000"` 를 붙이면 출력이 "000000" 이 된다(실측 확인).
+# 지금은 case 의 * 로 떨어져 동작은 같았지만, 반환 계약이 주석과 달랐다.
+# curl 의 출력 하나만 남긴다.
 probe_status() {
-    curl -s -o /dev/null -w '%{http_code}' -m 3 "$1" 2>/dev/null || echo "000"
+    curl -s -o /dev/null -w '%{http_code}' -m 3 "$1" 2>/dev/null || true
 }
 
 probe_body() {
@@ -168,18 +177,41 @@ wait_for_readiness() {
 
 # 실패한 컨테이너의 로그를 남긴다. 컨테이너를 지우면 로그도 사라진다.
 # 롤백이 성공하면 왜 실패했는지 볼 방법이 이것뿐이다.
+# ⚠️ 이 함수는 **항상 0 을 반환한다.** 이유가 있다.
+#
+# 이건 진단용 로그다. 롤백보다 먼저 불리는데, 여기서 실패해 set -e 로 스크립트가
+# 죽으면 **로그를 못 남겼다는 이유로 서비스 복구를 안 하게 된다.**
+# 실제로 그런 상태였다 — LOG_DIR 을 만들 수 없으면 mkdir 이 실패하고,
+# 롤백 이미지를 띄우기도 전에 스크립트가 종료됐다. 그때 종료 코드는 1 이라
+# 계약상 "이전 버전 복구 성공"으로 읽혔다.
+#
+# 진단은 복구보다 우선하지 않는다.
+#
+# 다만 모든 실패를 조용히 삼키지는 않는다. 무시한 실패는 무엇을 못 했는지 남긴다.
 save_logs() {
     local tag="$1"
-    mkdir -p "$LOG_DIR"
-    local out
-    out="${LOG_DIR}/failed-${tag}-$(date +%Y%m%d-%H%M%S).log"
-    if docker inspect "$CONTAINER" >/dev/null 2>&1; then
-        docker logs "$CONTAINER" > "$out" 2>&1 || true
-        log "실패한 컨테이너 로그: $out"
-    else
+
+    if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+        fail "로그 디렉터리를 만들지 못했습니다: $LOG_DIR"
+        fail "진단 로그 없이 롤백을 계속합니다 (복구가 우선입니다)"
+        return 0
+    fi
+
+    if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
         # docker run 자체가 실패하면 남길 컨테이너가 없다.
         log "남길 컨테이너가 없습니다 (docker run 이 컨테이너를 만들지 못함)"
+        return 0
     fi
+
+    local out
+    out="${LOG_DIR}/failed-${tag}-$(date +%Y%m%d-%H%M%S).log"
+    if docker logs "$CONTAINER" > "$out" 2>&1; then
+        log "실패한 컨테이너 로그: $out"
+    else
+        fail "컨테이너 로그를 저장하지 못했습니다: $out"
+        fail "진단 로그 없이 롤백을 계속합니다 (복구가 우선입니다)"
+    fi
+    return 0
 }
 
 # 되돌릴 곳이 없을 때 실패한 컨테이너를 치운다.
@@ -196,10 +228,22 @@ cleanup_failed_container() {
 
 # last-good 을 원자적으로 갱신한다.
 # echo > 는 중간에 죽으면 빈 파일을 남길 수 있고, 그러면 롤백 후보가 사라진다.
+# tmp 에 쓰고 mv 로 바꾸므로, 실패하면 **기존 state 파일이 그대로 남는다.**
+# 이 성질이 아래 정책의 근거다.
+#
+# 실패하면 non-zero 를 돌려준다. 호출자가 반드시 조건문 안에서 부를 것 —
+# 예전에는 bare call 이라 set -e 로 새어 나갔다.
 write_state() {
     local tmp="${STATE_FILE}.tmp.$$"
-    printf '%s\n' "$1" > "$tmp"
-    mv -f "$tmp" "$STATE_FILE"
+    if ! printf '%s\n' "$1" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null || true
+        return 1
+    fi
+    if ! mv -f "$tmp" "$STATE_FILE" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null || true
+        return 1
+    fi
+    return 0
 }
 
 # 컨테이너를 지정한 이미지로 띄운다.
@@ -300,7 +344,12 @@ require flock
 # 배포 두 개가 겹치면 서로의 컨테이너를 제거하고, readiness 대상이 뒤섞이고,
 # last-good 을 덮어써 롤백 후보가 오염된다. 큐를 만들 문제는 아니고
 # "한 번에 하나"면 충분하다.
-exec 9>"$LOCK_FILE"
+# 락 파일 자체를 열지 못하면(디스크·권한) set -e 로 조용히 죽지 않게 명시적으로 끊는다.
+# 이것도 "모든 실패는 정의된 종료 코드로" 원칙에 포함된다.
+if ! exec 9>"$LOCK_FILE"; then
+    fail "락 파일을 열지 못했습니다: $LOCK_FILE"
+    exit 3
+fi
 if ! flock -n 9; then
     fail "다른 배포가 진행 중입니다. 끝난 뒤 다시 실행하십시오. (lock: $LOCK_FILE)"
     exit 3
@@ -399,9 +448,41 @@ fi
 # ─────────────────────────── 성공 ───────────────────────────
 
 T_RECOVER=$(now_ms)
-write_state "$NEW_IMAGE"
-log "배포 성공. last-good 갱신: $NEW_IMAGE"
+
+# ── last-good 기록 ──
+#
+# 여기서 실패하면 어떻게 할 것인가. 새 버전은 **이미 readiness UP 이고 요청을 받고 있다.**
+#
+# 후보 A — 배포 실패로 보고 이전 버전으로 롤백한다.
+# 후보 B — 새 버전을 그대로 두고, 별도 종료 코드로 알린다.   ← 선택
+#
+# B 를 고른 이유는 두 가지다.
+#
+# 1) 바로 위 save_logs 에서 "진단이 복구를 막으면 안 된다"고 정했다.
+#    같은 원칙이면 **기록이 정상 서비스를 내리면 안 된다.** 파일 하나를 못 썼다고
+#    잘 돌고 있는 새 버전을 죽이는 것은 그 원칙을 뒤집는 것이다.
+#
+# 2) 이 실패의 실제 피해가 작다. write_state 는 tmp + mv 라서 실패하면
+#    **기존 state 파일이 그대로 남는다.** 그 값은 예전에 readiness 까지 확인된
+#    이미지다. 즉 다음 배포의 롤백 후보가 한 단계 옛 버전이 될 뿐,
+#    **검증되지 않은 이미지로 롤백하는 일은 생기지 않는다.**
+#
+# 다만 종료 코드는 실제 상태와 맞아야 한다. 0(성공)도 1(배포 실패)도 아니다.
+# 서비스는 정상인데 사람이 봐야 하는 상태라 4 를 따로 뒀다.
+if write_state "$NEW_IMAGE"; then
+    log "배포 성공. last-good 갱신: $NEW_IMAGE"
+    log "liveness : $(probe_body "$LIVENESS_URL" || echo '<응답 없음>')"
+    log "readiness: $(probe_body "$READINESS_URL" || echo '<응답 없음>')"
+    report_timeline "배포 성공"
+    exit 0
+fi
+
+fail "새 버전은 정상 실행 중인데 last-good 기록에 실패했습니다: $STATE_FILE"
+fail "서비스는 건드리지 않습니다 — $NEW_IMAGE 가 readiness UP 상태로 돌고 있습니다."
+fail "다만 다음 배포의 롤백 후보가 갱신되지 않았습니다."
+fail "현재 기록: $(cat "$STATE_FILE" 2>/dev/null || echo '<읽을 수 없음>')"
+fail "디스크·권한을 확인한 뒤 이 파일을 직접 맞춰 두십시오."
 log "liveness : $(probe_body "$LIVENESS_URL" || echo '<응답 없음>')"
 log "readiness: $(probe_body "$READINESS_URL" || echo '<응답 없음>')"
-report_timeline "배포 성공"
-exit 0
+report_timeline "배포 성공 · last-good 기록 실패"
+exit 4
