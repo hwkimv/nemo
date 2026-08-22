@@ -65,7 +65,9 @@
 보장하는 것은 **장기 평균 호출률**이지 "어떤 1초 구간에서도 ≤ 5"인
 strict sliding window가 아닙니다. 지연이 끼면 1초 창에 8~9회가 들어가는 것을
 테스트로 기록해 두었습니다. **JVM 1개 안에서만 유효**하다는 것도
-인스턴스 2개를 띄워 실측했습니다(각 5.0인데 합산 10.0).
+같은 jar로 **JVM 프로세스 2개**를 띄워 실측했습니다(각 5.0인데 합산 10.0).
+EC2 두 대가 아니라 프로세스 두 개입니다 — 확인하려던 것이 `nextSlotAtNanos`가
+JVM 안의 필드라는 성질이기 때문입니다.
 → [CS 11](docs/case-studies/11-rate-limiter-concurrency.md)
 
 ### 4. 운영 / AWS — 배포하고, 일부러 망가뜨렸습니다
@@ -79,7 +81,7 @@ CI가 이미지까지만 만들고 **배포할 곳이 없던** 서비스를 EC2 
 | 장애 3종 주입·실측 | 앱 크래시 **24.7초**(85%가 JVM 기동) / DB 단절 시 앱은 살아 있고 DB 쓰는 요청만 실패 / S3 불가 시 업로드만 502 |
 | liveness / readiness 분리 | DB 차단 시 `/livez` **UP 8.2ms**, `/readyz` **DOWN**. 기동 중인 앱을 죽이지 않습니다 |
 | readiness 응답 시간 | DB 장애 시 **34.5초 → 6.0초** (Hikari `connection-timeout` 30s → 5s) |
-| 배포 자동화 + rollback | 실패한 배포를 감지해 **26초 만에 이전 이미지로 자동 복구**. 실패 이미지는 last-good을 오염시키지 않습니다 |
+| 배포 자동화 + rollback | 실패를 감지해 이전 이미지로 자동 복구. **실제 서비스 중단 52.4초** (감지 29.1s + 롤백 24.0s). `docker run` 실패·조기 종료·readiness 실패가 모두 같은 롤백 경로 |
 
 **단일 인스턴스입니다. 고가용성이 아닙니다.** 그 밖에 하지 않은 것은
 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
@@ -337,7 +339,7 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **배포가 continuous deployment는 아닙니다.** GitHub Actions가 테스트·이미지 push까지 하고, 배포 실행은 호스트의 `nemo-deploy.sh`(readiness 확인 + 자동 rollback)가 합니다. `main` push마다 자동으로 나가지 않습니다 — 인스턴스가 평소 정지돼 있고, OIDC→SSM은 현재 IAM 권한으로 구축할 수 없습니다. ([근거](infra/deploy/README.md))
 - **zero-downtime이 아닙니다.** 포트 8080을 직접 쓰는 단일 인스턴스라 컨테이너를 교체하는 사이에 중단이 있습니다. 앞단에 Nginx/ALB를 두면 없앨 수 있지만 지금 필요하지 않은 인프라라 넣지 않았습니다.
 - **DB 마이그레이션은 rollback되지 않습니다.** Flyway가 적용한 스키마 변경은 이전 이미지로 되돌려도 그대로 남습니다. 하위 호환되지 않는 마이그레이션을 포함한 배포는 이 스크립트로 안전하게 되돌릴 수 없습니다.
-- **외부 API 레이트 리미터는 JVM 안에서만 유효합니다.** 인스턴스 2개를 띄워 실측했습니다 — 각각은 5.0 req/s를 정확히 지키는데 **네이버가 받는 합산은 10.0 req/s**입니다. 다만 다중 인스턴스로 갈 때 더 급한 건 리미터가 아니라 **메모리에 있는 비밀번호 재설정 토큰·이메일 인증코드**입니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
+- **외부 API 레이트 리미터는 JVM 안에서만 유효합니다.** 같은 jar로 **JVM 프로세스 2개**를 띄워 실측했습니다(EC2 두 대가 아닙니다) — 각각은 5.0 req/s를 정확히 지키는데 **네이버가 받는 합산은 10.0 req/s**입니다. 다만 다중 인스턴스로 갈 때 더 급한 건 리미터가 아니라 **메모리에 있는 비밀번호 재설정 토큰·이메일 인증코드**입니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **`min-interval-ms=200`의 근거가 약합니다.** 네이버가 공표한 쿼터가 아니라 기존 코드에 있던 값을 설정으로 옮긴 것입니다. 실제 허용치 확인이 필요합니다.
 - **리미터가 보장하는 것은 장기 평균 호출률입니다.** 어떤 1초 구간에서도 5회 이하라는 strict sliding window는 보장하지 않습니다. GC·스케줄링 지연으로 호출이 뭉칠 수 있습니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **기존에 쌓인 S3 고아 객체는 그대로입니다.** 이번 정합성 작업은 앞으로 생기는 것을 막을 뿐입니다. 과거 것을 찾으려면 S3 객체 목록과 DB를 대조하는 별도 작업이 필요합니다. ([CS 10](docs/case-studies/10-storage-consistency.md))
