@@ -22,7 +22,7 @@
 | 09 | [unique 제약이 지켜주지 않는 조건 하나](case-studies/09-concurrency.md) | 동시 업로드로 저장 한도 초과 (26장 → 20장) | `Verified` |
 | 10 | [DB 트랜잭션이 지켜주지 못하는 경계](case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지 재현. 보상 처리 + DB 기반 재시도 | `Verified` |
 | 11 | [AtomicLong을 썼는데 동시 요청에서 막지 못한 리미터](case-studies/11-rate-limiter-concurrency.md) | 동시 16건 **74.0 → 5.0 req/s**. AI 보조 워크플로우 적용 | `Verified` |
-| 12 | [배포할 곳이 없던 서비스를 AWS에 올리고 일부러 망가뜨려 보기](case-studies/12-cloud-operation.md) | EC2 배포 · IAM Role · DB 노출 차단 · 장애 3종 실측 | `Verified` |
+| 12 | [배포할 곳이 없던 서비스를 AWS에 올리고 일부러 망가뜨려 보기](case-studies/12-cloud-operation.md) | EC2 배포 · IAM Role · DB 노출 차단 · 장애 3종 실측 · liveness/readiness 분리 · 자동 rollback | `Verified` |
 
 ---
 
@@ -51,7 +51,7 @@ S3 정리 테이블 DDL(`tools/storage/sql/`).
 | 문서 | 내용 |
 |---|---|
 | [AI 보조 개발 워크플로우](ai-development-workflow.md) | 분석 → 재현 → 대안 → **사람의 결정** → 구현 → 측정 → 독립 리뷰 |
-| [재사용 프롬프트](../prompts/engineering/) | `analyze-problem` / `implement-fix` / `review-pr` |
+| [재사용 프롬프트](../prompts/engineering/) | `analyze-problem` / `implement-fix` / `review-pr` / `review-deployment` |
 
 ---
 
@@ -60,6 +60,7 @@ S3 정리 테이블 DDL(`tools/storage/sql/`).
 | 문서 | 내용 |
 |---|---|
 | [기술 변경 기록 템플릿](reference/technical-change-record-template.md) | 새 변경을 기록할 때 복사해 씁니다 |
+| [DB 최소 권한 롤 분석](reference/db-least-privilege-analysis.md) | 운영이 `postgres` 롤로 붙는 문제. **분석만, 변경 없음** |
 | [설계·계획 기록](reference/design-records/) | 작업 전에 세운 설계와 계획. 결과와 다를 수 있는 과거 기록입니다 |
 
 ---
