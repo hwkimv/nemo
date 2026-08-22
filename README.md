@@ -77,8 +77,8 @@ CI가 이미지까지만 만들고 **배포할 곳이 없던** 서비스를 EC2 
 | 정적 AWS 키 → IAM Role | 컨테이너 안 `AWS_ACCESS_KEY` **0개**. `ListAllMyBuckets`는 `AccessDenied`로 최소 권한 실증 |
 | `anon`/`authenticated` 테이블 권한 회수 | 11개 테이블 전부 → **0건**. `ALTER DEFAULT PRIVILEGES`로 앞으로 만들 테이블도 닫힘 |
 | 장애 3종 주입·실측 | 앱 크래시 **24.7초**(85%가 JVM 기동) / DB 단절 시 앱은 살아 있고 DB 쓰는 요청만 실패 / S3 불가 시 업로드만 502 |
-| liveness / readiness 분리 | DB 차단 시 `/livez` **UP 6.7ms**, `/readyz` **DOWN**. 기동 중인 앱을 죽이지 않습니다 |
-| readiness 응답 시간 | **30.1초 → 5초** (Hikari `connection-timeout`) |
+| liveness / readiness 분리 | DB 차단 시 `/livez` **UP 8.2ms**, `/readyz` **DOWN**. 기동 중인 앱을 죽이지 않습니다 |
+| readiness 응답 시간 | DB 장애 시 **34.5초 → 6.0초** (Hikari `connection-timeout` 30s → 5s) |
 | 배포 자동화 + rollback | 실패한 배포를 감지해 **26초 만에 이전 이미지로 자동 복구**. 실패 이미지는 last-good을 오염시키지 않습니다 |
 
 **단일 인스턴스입니다. 고가용성이 아닙니다.** 그 밖에 하지 않은 것은
