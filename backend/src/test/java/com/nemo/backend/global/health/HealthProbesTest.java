@@ -105,6 +105,42 @@ class HealthProbesTest {
     }
 
     /**
+     * 배포 스크립트가 쓰는 경로다.
+     *
+     * <p>관리 포트는 {@code 127.0.0.1} 에만 바인딩돼 있어 컨테이너 밖에서 부를 수 없다.
+     * 그래서 프로브 <b>둘만</b> 서비스 포트에도 얹는다.
+     * {@code /actuator} 전체를 여는 것이 아니다 — {@code /actuator/prometheus} 는
+     * 그대로 관리 포트에만 있다.
+     */
+    @Test
+    @DisplayName("프로브가 서비스 포트에도 /livez · /readyz 로 얹힌다")
+    void probesAreReachableOnServerPort() throws Exception {
+        mockMvc.perform(get("/livez"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+
+        mockMvc.perform(get("/readyz"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    /**
+     * {@code additional-path} 가 actuator 전체를 서비스 포트로 끌어오지 않는지 고정한다.
+     *
+     * <p>/actuator/prometheus 는 사용 중인 API 경로·응답시간·오류율·JVM 상태를 담고 있어
+     * 공개 포트에 열면 서비스 내부 구조를 알려주는 것과 같다(CS 06 판단).
+     * 프로브를 서비스 포트에 얹으면서 이 경계가 무너지지 않았는지 본다.
+     */
+    @Test
+    @DisplayName("프로브를 얹어도 /actuator/prometheus 가 서비스 포트로 새지 않는다")
+    void additionalPathDoesNotExposeTheRestOfActuator() throws Exception {
+        // dev 프로필은 관리 포트를 분리하지 않아 200 이 정상이다.
+        // 여기서 고정하려는 것은 "/livez 와 같은 짧은 별칭이 생기지 않았다"는 것이다.
+        mockMvc.perform(get("/prometheus")).andExpect(status().isNotFound());
+        mockMvc.perform(get("/metrics")).andExpect(status().isNotFound());
+    }
+
+    /**
      * 기존 {@code /actuator/health} 를 없애지 않는다.
      * CI 의 컨테이너 기동 확인과 CS 12 의 장애 실험이 이 경로를 쓴다.
      */

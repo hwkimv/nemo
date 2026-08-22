@@ -1,15 +1,31 @@
 # NEMO 배포 (수동 실행)
 #
-# 아직 상시 공개 인스턴스가 없어 자동 배포는 켜두지 않았다.
-# 대신 **배포 전에 반드시 통과해야 하는 관문**을 코드로 고정해 둔다.
-#
 # 이 워크플로가 하는 일
-#   1) 테스트 → 빌드 → 이미지 빌드를 다시 확인한다 (CI 재사용)
-#   2) 배포에 필요한 secret 이 실제로 설정돼 있는지 확인한다
-#   3) 이미지를 GitHub Container Registry 에 push 한다
+#   1) 테스트를 다시 통과시킨다 (배포 전 관문)
+#   2) 이미지를 GitHub Container Registry 에 push 한다
+#   3) 그 이미지를 배포하는 **정확한 명령 한 줄**을 출력한다
 #
-# 실제 배포(Railway 등) 단계는 대상이 정해지면 마지막에 연결한다.
-# 지금 없는 단계를 있는 것처럼 적어두지 않는다.
+# 이 워크플로가 하지 않는 일 — 그리고 왜 안 하는지
+# ------------------------------------------------
+# EC2 에 직접 접속하지 않는다. push 방식 배포를 붙이려면 둘 중 하나가 필요하다.
+#
+#   A. SSH  — GitHub Secrets 에 SSH 개인키(장기 자격증명)를 넣고, 22번 포트를
+#             GitHub 러너 대역까지 열어야 한다. 지금은 개발자 IP /32 만 열려 있다.
+#             게다가 Elastic IP 를 안 붙여서 인스턴스를 켤 때마다 퍼블릭 IP 가 바뀐다.
+#             호스트를 Secrets 에 박아두면 재기동마다 깨진다.
+#
+#   B. OIDC → SSM — 인바운드 포트도 장기 키도 필요 없어 이쪽이 더 낫다.
+#             그런데 실제로 확인해 보니 구축할 수 없었다.
+#               · GitHub OIDC provider 없음 (`iam list-open-id-connect-providers` → 빈 목록)
+#               · 현재 IAM 사용자 권한이 IAMReadOnlyAccess — provider·role 생성 불가
+#               · nemo-ec2-role 에 SSM 정책이 없어 SSM managed instance 가 아님
+#
+# 그래서 배포 실행은 호스트의 infra/deploy/nemo-deploy.sh 가 맡는다.
+# 그 스크립트가 readiness 확인과 실패 시 자동 rollback 까지 한다.
+#
+# ⚠️ 이것은 **deployment automation** 이지 continuous deployment 가 아니다.
+#    main push 마다 자동으로 나가지 않는다. 인스턴스가 평소 정지돼 있어
+#    그렇게 하는 것이 맞지도 않다.
 
 name: Deploy
 
@@ -53,28 +69,21 @@ jobs:
         working-directory: backend
         run: ./gradlew test --no-daemon
 
-      # 비밀값은 저장소에 없다. 배포 직전에 존재 여부만 확인한다.
-      # 값은 절대 출력하지 않는다. (CS 03 에서 토큰 로그를 지운 것과 같은 기준)
-      # ⚠️ 런타임 secret 을 여기서 검사하지 않는다.
-      #
-      # 예전에는 DB_URL / DB_USER / DB_PASSWORD / JWT_SECRET 이 설정됐는지 확인했다.
-      # 그런데 이 워크플로는 그 값을 쓰지 않는다 — 이미지 빌드와 push 만 한다.
-      # 실제 주입은 EC2 의 /home/ec2-user/nemo.env 에서 일어난다.
-      #
-      # 쓰지도 않는 DB 비밀번호와 JWT Secret 을 GitHub 가 들고 있을 이유가 없다.
-      # 자격증명은 필요한 곳에만 두는 편이 유출 반경이 작다.
-      # 자동 배포를 붙여 실제로 필요해지면 그때 추가한다.
-      #
-      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 도 마찬가지로 없다.
-      # EC2 가 IAM Role(nemo-ec2-profile → nemo-ec2-role)로 S3 에 붙는다.
-      # 오히려 이 값을 주면 S3Config 가 정적 키 분기를 타서
-      # 인스턴스 프로파일을 쓰지 않게 된다.
-      #
-      # 실측(2026-08-21, i-09349eef8ccabedb7):
-      #   EC2 안 AWS_ACCESS_KEY 환경변수 0개
-      #   IMDSv2 → nemo-ec2-role, S3 Get/Put/Delete/List 성공
-      #   ListAllMyBuckets 은 AccessDenied (최소 권한 확인)
+      # 배포 스크립트가 문법 오류로 깨지면 배포 당일에야 안다.
+      # 여기서 미리 파싱한다.
+      - name: 배포 스크립트 문법 검사
+        run: bash -n infra/deploy/nemo-deploy.sh
 
+  # ⚠️ 런타임 secret 을 이 워크플로에서 검사하지 않는다.
+  #
+  # 예전에는 DB_URL / DB_USER / DB_PASSWORD / JWT_SECRET 이 설정됐는지 확인했다.
+  # 그런데 이 워크플로는 그 값을 쓰지 않는다 — 이미지 빌드와 push 만 한다.
+  # 실제 주입은 EC2 의 /home/ec2-user/nemo.env 에서 일어난다.
+  # 쓰지도 않는 비밀값을 GitHub 가 들고 있을 이유가 없다. 유출 반경만 넓어진다.
+  #
+  # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 도 없다.
+  # EC2 가 IAM Role(nemo-ec2-profile → nemo-ec2-role)로 S3 에 붙는다.
+  # 오히려 이 값을 주면 S3Config 가 정적 키 분기를 타서 인스턴스 프로파일을 쓰지 않게 된다.
   push-image:
     name: 이미지 push
     runs-on: ubuntu-latest
@@ -103,13 +112,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: 배포 대상 안내
+      - name: 배포 명령 출력
         run: |
-          echo "이미지: ghcr.io/${{ github.repository }}/backend:${{ github.sha }}"
-          echo "환경:   ${{ inputs.environment }}"
-          echo "SENTRY_RELEASE 로 쓸 값: ${{ github.sha }}"
-          echo "  → 배포 시 SENTRY_RELEASE=${{ github.sha }} 를 넘기면"
-          echo "     Sentry 이벤트와 배포된 커밋이 이어집니다."
-          echo ""
-          echo "실제 배포 단계는 아직 연결하지 않았습니다."
-          echo "대상 플랫폼이 정해지면 이 잡 뒤에 배포 스텝을 추가합니다."
+          {
+            echo "### 배포 준비 완료"
+            echo ""
+            echo "이미지: \`ghcr.io/${{ github.repository }}/backend:${{ github.sha }}\`"
+            echo ""
+            echo "EC2 호스트에서 아래 한 줄을 실행하면 배포됩니다."
+            echo "readiness 확인과 실패 시 자동 rollback 이 스크립트 안에 있습니다."
+            echo ""
+            echo '```bash'
+            echo "~/nemo-deploy.sh ${{ github.sha }}"
+            echo '```'
+            echo ""
+            echo "| 종료 코드 | 뜻 |"
+            echo "|---|---|"
+            echo "| 0 | 배포 성공 (readiness 확인됨) |"
+            echo "| 1 | 새 이미지 실패 → 이전 이미지로 rollback 성공 |"
+            echo "| 2 | rollback 까지 실패 — 사람이 봐야 함 |"
+            echo "| 3 | 사용법 오류 / 사전 조건 불충족 |"
+            echo ""
+            echo "Sentry 를 쓴다면 \`SENTRY_RELEASE=${{ github.sha }}\` 를 nemo.env 에 넣으면"
+            echo "이벤트와 배포된 커밋이 이어집니다."
+          } >> "$GITHUB_STEP_SUMMARY"

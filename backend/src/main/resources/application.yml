@@ -91,6 +91,14 @@ management:
         # 먼저 답해야 한다. 대부분의 경우 답은 아니오다.
         liveness:
           include: livenessState
+          # 관리 포트(9090)는 127.0.0.1 에만 바인딩돼 있다(CS 06 설계 유지).
+          # 그러면 컨테이너 밖에서는 프로브를 부를 수 없어, 배포 스크립트가
+          # `docker exec ... curl` 로 들어가야 하고 이미지에 curl 이 있어야 한다.
+          #
+          # additional-path 는 이 프로브만 서비스 포트에도 얹는다.
+          # /actuator 전체나 /actuator/prometheus 를 여는 것이 아니다.
+          # show-details: never 라 본문은 {"status":"UP"} 뿐이고 내부 구조를 흘리지 않는다.
+          additional-path: "server:/livez"
         # 요청을 처리할 수 있는가를 본다. DB 없이는 대부분의 요청을 처리할 수 없다.
         #
         # ⚠️ S3 는 넣지 않는다. S3 가 죽어도 조회 API 는 정상 동작한다(CS 12 실험 C:
@@ -99,6 +107,7 @@ management:
         # 스토리지 장애의 영향 범위는 파일을 다루는 요청으로 좁혀져야 한다.
         readiness:
           include: readinessState,db
+          additional-path: "server:/readyz"
   health:
     # ⚠️ mail health indicator를 끈다.
     #
