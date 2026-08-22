@@ -14,28 +14,94 @@
 
 ## 한눈에
 
-이 저장소에서 **개인적으로** 한 작업과 그 결과입니다. 모든 숫자는 재현 명령과 함께 문서에 있습니다.
+이 저장소에서 **개인적으로** 한 작업입니다. 네 가지가 핵심이고, 나머지는 아래
+[Case Studies](#case-studies)에 있습니다. 모든 숫자는 재현 명령과 함께 문서에 있습니다.
 
-| 한 일 | 결과 | 근거 |
-|---|---|---|
-| 앨범 목록 N+1 제거 | DB 쿼리 **202 → 4**, 응답 **99ms → 11ms** | [CS 04](docs/case-studies/04-query-performance.md) |
-| 타임라인 조회를 DB 기간 쿼리로 | 응답 **8.3ms → 4.4ms**, 읽는 행 1,000 → 93 | [CS 04](docs/case-studies/04-query-performance.md) |
-| 앨범 목록 DB 페이지네이션 | 앨범 5,000개에서 **74ms → 8ms**, 앨범 수와 무관하게 고정 | [CS 04](docs/case-studies/04-query-performance.md) |
-| 인증·권한 경계 결함 4건 수정 | 타인 사진 접근 차단, 토큰 로그 제거 | [CS 03](docs/case-studies/03-security-boundaries.md) |
-| 지도 API 캐시 효과 측정 | 반복 조회 외부 호출 **820 → 0회**, **8.2초 → 8.3ms** | [CS 05](docs/case-studies/05-map-api-cache.md) |
-| 지도 외부 호출 감축 (실제 API) | 뷰포트 1회 **25 → 10회**, 응답 **4,770 → 1,857ms** (결과 동일) | [CS 05](docs/case-studies/05-map-api-cache.md) |
-| 지도 API HUB 이관 대응 | 지역 검색 401 → 200. 구 경로가 NCP 키를 못 받는 것을 실측으로 확인 | [CS 05](docs/case-studies/05-map-api-cache.md) |
-| 캐시를 데이터 성격별로 분리 | Local Search 5분 / Reverse Geocoding 30분. 실제 API 적중률 **98.9% / 69.9%** | [CS 05](docs/case-studies/05-map-api-cache.md) |
-| 모니터링 구축 (Prometheus/Grafana) | 지표로 **레이트 리미터가 동시성에 무력**한 것 발견 | [CS 06](docs/case-studies/06-monitoring.md) |
-| CI 파이프라인 구축 | 테스트 실패 시 빌드·이미지 차단. **결함 5건 발견·수정** | [CS 07](docs/case-studies/07-ci-cd.md) |
-| Sentry 오류 추적 | 중복 친구 요청 **500 → 409**. 토큰·breadcrumb 스크러빙 검증 | [CS 08](docs/case-studies/08-sentry.md) |
-| 동시성 검증 | 동시 업로드가 저장 한도를 넘던 문제 (**26장 → 20장**) | [CS 09](docs/case-studies/09-concurrency.md) |
-| S3↔DB 정합성 | 트랜잭션이 못 막는 불일치 **3가지 재현** → 보상 처리 + DB 기반 재시도 (인프라 추가 0) | [CS 10](docs/case-studies/10-storage-consistency.md) |
-| 외부 API 레이트 리미터 | 동시 요청에서 무력하던 리미터 (**74.0 → 5.0 req/s**, 목표 5.0) | [CS 11](docs/case-studies/11-rate-limiter-concurrency.md) |
-| AWS 배포와 장애 실험 | EC2 1대 운영. 정적 키 → IAM Role, **anon 전체 테이블 접근 권한 차단**, 앱 중단 **24.7초** 실측 | [CS 12](docs/case-studies/12-cloud-operation.md) |
-| 자동 회귀 테스트 | 전체 **185개**, 실패·오류·skip 0 | [CS 01](docs/case-studies/01-jwt-authentication.md), [AlbumPhoto·PhotoTag](docs/album-photo-photo-tag-implementation.md) |
-| PostgreSQL 전환 후 런타임 하드닝 | 프로필 분리, 운영 공개 표면 차단 | [CS 02](docs/case-studies/02-postgres-runtime-hardening.md) |
-| 앨범 사진 순서·친구 위치 태그 | `AlbumPhoto` 순서 영속화, `PhotoTag` 생성·조회·삭제와 권한 검증 | [구현 근거](docs/album-photo-photo-tag-implementation.md) |
+### 1. 성능 — 측정해서 고치고, 다시 측정했습니다
+
+| | Before | After |
+|---|---:|---:|
+| 앨범 목록 DB 쿼리 | 202개 | **4개** |
+| 앨범 목록 응답 | 99ms | **11ms** |
+| 앨범 5,000개일 때 (페이지네이션) | 74ms | **8ms** — 앨범 수와 무관하게 고정 |
+| 타임라인 조회 (읽는 행 1,000 → 93) | 8.3ms | **4.4ms** |
+
+측정하다 **코드를 한 줄도 안 바꾼 API가 3.6배 빨라져 있는 것**을 발견해서,
+같은 시각·같은 DB에서 이전 코드를 다시 재고 바꾸지 않은 API를 대조군으로 삼아
+환경 덕분에 빨라진 몫을 분리했습니다. → [CS 04](docs/case-studies/04-query-performance.md)
+
+### 2. 데이터 정합성 — 트랜잭션이 지켜주지 못하는 경계
+
+`@Transactional`이 붙어 있어 안전해 보이던 사진 업로드·삭제에서,
+**롤백해도 되돌아가지 않는 상태 3가지**를 테스트로 먼저 재현했습니다.
+
+| 실패 경로 | 재현된 결과 |
+|---|---|
+| S3 성공 → DB 실패 | DB 0건인데 S3에 고아 객체 1개. 치우는 코드 없음 |
+| S3 삭제 성공 → DB 실패 | **파일은 사라졌는데 DB는 살아 있다고 적혀 있음** (되살릴 수 없음) |
+| S3 삭제 실패 | DB는 삭제 처리. **지울 키를 아는 코드가 사라짐** |
+
+해결은 **즉시 보상 삭제 + PostgreSQL에 적어 두는 정리 작업 + 지수 백오프 재시도**입니다.
+메시지 큐를 쓰지 않은 이유는 하나입니다 — **지울 키를 잃지 않는 것이 목적**인데
+그건 이미 있는 DB가 트랜잭션과 함께 해 줍니다. RabbitMQ를 넣으면 운영할 브로커가
+하나 늘고, 브로커가 죽으면 같은 문제가 다시 생깁니다.
+→ [CS 10](docs/case-studies/10-storage-consistency.md)
+
+### 3. 동시성 / 외부 API — `AtomicLong`을 썼는데 안 막히던 리미터
+
+`get()`과 `set()`은 각각 원자적이지만 **`읽기 → 계산 → sleep → 쓰기` 전체는 아니었습니다.**
+스레드들이 같은 값을 읽고, 같이 자고, 같이 깨어 함께 나갔습니다.
+
+| 동시성 | Before | After | 목표 |
+|---:|---:|---:|---:|
+| 4 | 18.6 req/s | **5.0** | 5.0 |
+| 8 | 37.2 req/s | **5.0** | 5.0 |
+| 16 | **74.0 req/s** | **5.0** | 5.0 |
+
+**CAS 슬롯 예약**으로 고쳤습니다(의존성 추가 0). 대기 상한을 넘긴 요청은
+**슬롯을 소비하지 않고** 거절합니다 — 처음 구현은 거절할 요청도 슬롯을 예약해
+아무도 외부 API를 부르지 않는데 사용자만 429를 받는 상태가 됐고, PR 리뷰에서 잡혔습니다.
+
+보장하는 것은 **장기 평균 호출률**이지 "어떤 1초 구간에서도 ≤ 5"인
+strict sliding window가 아닙니다. 지연이 끼면 1초 창에 8~9회가 들어가는 것을
+테스트로 기록해 두었습니다. **JVM 1개 안에서만 유효**하다는 것도
+같은 jar로 **JVM 프로세스 2개**를 띄워 실측했습니다(각 5.0인데 합산 10.0).
+EC2 두 대가 아니라 프로세스 두 개입니다 — 확인하려던 것이 `nextSlotAtNanos`가
+JVM 안의 필드라는 성질이기 때문입니다.
+→ [CS 11](docs/case-studies/11-rate-limiter-concurrency.md)
+
+### 4. 운영 / AWS — 배포하고, 일부러 망가뜨렸습니다
+
+CI가 이미지까지만 만들고 **배포할 곳이 없던** 서비스를 EC2 1대에 올렸습니다.
+
+| 한 일 | 결과 |
+|---|---|
+| 정적 AWS 키 → IAM Role | 컨테이너 안 `AWS_ACCESS_KEY` **0개**. `ListAllMyBuckets`는 `AccessDenied`로 최소 권한 실증 |
+| `anon`/`authenticated` 테이블 권한 회수 | 11개 테이블 전부 → **0건**. `ALTER DEFAULT PRIVILEGES`로 앞으로 만들 테이블도 닫힘 |
+| 장애 3종 주입·실측 | 앱 크래시 **24.7초**(85%가 JVM 기동) / DB 단절 시 앱은 살아 있고 DB 쓰는 요청만 실패 / S3 불가 시 업로드만 502 |
+| liveness / readiness 분리 | DB 차단 시 `/livez` **UP 8.2ms**, `/readyz` **DOWN**. 기동 중인 앱을 죽이지 않습니다 |
+| readiness 응답 시간 | DB 장애 시 **34.5초 → 6.0초** (Hikari `connection-timeout` 30s → 5s) |
+| 배포 자동화 + rollback | 실패를 감지해 이전 이미지로 자동 복구. `/readyz` 없는 이미지 기준 **실제 서비스 중단 52.4초**, `docker run` 실패는 **24.1초**. 실패 경로 8종을 EC2에서 검증 |
+
+**단일 인스턴스입니다. 고가용성이 아닙니다.** 그 밖에 하지 않은 것은
+[알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
+→ [CS 12](docs/case-studies/12-cloud-operation.md) · [배포 구조](infra/deploy/README.md)
+
+### AI 보조 개발 워크플로우
+
+도구를 썼다는 이야기가 아니라 **검증 절차**가 핵심입니다.
+
+```
+Issue → 코드 분석(파일:라인) → 실패 재현 → 대안 비교
+      → ★ 사람의 설계 결정 → 구현 → 회귀 테스트
+      → 독립 리뷰(다른 세션) → 최종 검증
+```
+
+독립 리뷰가 실제로 잡아낸 것들입니다 — 리미터에서 **유령 슬롯**(거절된 요청이
+미래 슬롯을 소비), 배포 작업에서 **"고쳤다"고 문서에만 적고 파일은 안 고친 스키마 충돌**,
+비용 비교에서 **빠뜨린 Public IPv4**, 그리고 **실측 범위를 넘은 보안 문구**.
+자기가 고쳤다고 믿는 것은 자기가 검증해도 나오지 않습니다.
+→ [워크플로우 문서](docs/ai-development-workflow.md)
 
 **측정하지 않은 것은 개선했다고 쓰지 않았습니다.** 확인되지 않은 항목은 [알려진 한계](#알려진-한계)에 그대로 적어 두었습니다.
 
@@ -159,10 +225,10 @@ git log dev --author=hwkimv --oneline -- <경로> | wc -l
 | 06 | [지표를 붙이고 나서 알게 된 것](docs/case-studies/06-monitoring.md) | Actuator→Prometheus→Grafana. 지표가 찾아준 동시성 결함 |
 | 07 | [테스트를 통과하지 않은 코드가 못 지나가게 막기](docs/case-studies/07-ci-cd.md) | GitHub Actions 관문. 돌려보며 드러난 결함 5건 |
 | 08 | [Sentry를 붙였는데 이벤트가 0건이었다](docs/case-studies/08-sentry.md) | 전역 핸들러가 삼키던 예외. 정상 상황이 500이던 문제 |
-| 12 | [배포할 곳이 없던 서비스를 AWS에 올리고 일부러 망가뜨려 보기](docs/case-studies/12-cloud-operation.md) | EC2 1대 배포. 정적 키 → IAM Role, anon 접근 권한 차단, 장애 3종 실측 |
-| 11 | [AtomicLong을 썼는데 동시 요청에서 막지 못한 리미터](docs/case-studies/11-rate-limiter-concurrency.md) | 외부 API 호출률 동시 16건 **74.0 → 5.0 req/s**. CAS 슬롯 예약, 의존성 추가 0 |
-| 10 | [DB 트랜잭션이 지켜주지 못하는 경계](docs/case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지를 테스트로 재현. 보상 처리 + DB 기반 재시도로 복구 |
 | 09 | [unique 제약이 지켜주지 않는 조건 하나](docs/case-studies/09-concurrency.md) | 깨지는 것을 먼저 증명하고 고친 동시성 결함 |
+| 10 | [DB 트랜잭션이 지켜주지 못하는 경계](docs/case-studies/10-storage-consistency.md) | S3↔DB 불일치 3가지를 테스트로 재현. 보상 처리 + DB 기반 재시도로 복구 |
+| 11 | [AtomicLong을 썼는데 동시 요청에서 막지 못한 리미터](docs/case-studies/11-rate-limiter-concurrency.md) | 외부 API 호출률 동시 16건 **74.0 → 5.0 req/s**. CAS 슬롯 예약, 의존성 추가 0 |
+| 12 | [배포할 곳이 없던 서비스를 AWS에 올리고 일부러 망가뜨려 보기](docs/case-studies/12-cloud-operation.md) | EC2 1대 배포. 정적 키 → IAM Role, anon 접근 권한 차단, 장애 3종 실측 |
 
 전체 문서 지도와 측정 원자료는 [문서 허브](docs/README.md)에 있습니다.
 
@@ -199,7 +265,12 @@ cd backend && ./gradlew bootRun
 
 기본 프로필은 `dev`입니다. 환경변수 없이 H2 인메모리로 뜹니다. Swagger는 `http://localhost:8080/swagger-ui/index.html`.
 
-운영 프로필은 환경변수를 요구합니다 — `SPRING_PROFILES_ACTIVE=prod`, `DB_URL` / `DB_USER` / `DB_PASSWORD`, `JWT_SECRET`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. 저장소에는 비밀값을 커밋하지 않습니다.
+운영 프로필은 환경변수를 요구합니다 — `SPRING_PROFILES_ACTIVE=prod`, `DB_URL` / `DB_USER` / `DB_PASSWORD`, `JWT_SECRET`, `PUBLIC_BASE_URL`. 저장소에는 비밀값을 커밋하지 않습니다.
+
+> **AWS 키는 넣지 마십시오.** `app.s3.accessKey` / `app.s3.secretKey`(환경변수 `AWS_ACCESS_KEY` / `AWS_SECRET_KEY`)를
+> 비워 두면 EC2 인스턴스 프로파일에서 임시 자격증명을 받습니다. 값을 주면 `S3Config`가
+> 정적 키 분기를 타서 **IAM Role을 쓰지 않게 됩니다.** 한쪽만 주면 기동 시점에 실패합니다 —
+> 조용히 개발자 PC의 `~/.aws`로 넘어가 엉뚱한 계정·버킷에 붙는 것을 막기 위해서입니다.
 
 ### Frontend
 
@@ -221,6 +292,19 @@ backend-test ──> backend-build ──> docker-image
 
 > 관문이 실제로 강제되려면 저장소 설정에서 브랜치 보호 규칙에 `backend-test`를 필수로 지정해야 합니다.
 
+### 배포
+
+```
+GitHub Actions (수동 실행)          EC2 호스트
+  test → 이미지 push → SHA 출력  →  ~/nemo-deploy.sh <SHA>
+                                      pull → 교체 → /readyz 폴링
+                                      실패하면 이전 이미지로 자동 rollback
+```
+
+`main` push마다 자동으로 나가지 않습니다. **deployment automation이지
+continuous deployment가 아닙니다.** 왜 GitHub Actions가 EC2에 직접 접속하지 않는지는
+[배포 문서](infra/deploy/README.md)에 실측 근거와 함께 적었습니다.
+
 ### 모니터링
 
 ```bash
@@ -235,7 +319,7 @@ Grafana `http://localhost:3000` (admin / admin) → NEMO 폴더. 앱은 호스�
 cd backend && ./gradlew test
 ```
 
-**156 tests.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
+**198 tests / 실패·오류·skip 0.** Gradle toolchain이 **Java 21**을 요구합니다 — JDK 23에서는 빌드가 깨집니다.
 
 성능 측정을 재현하려면 PostgreSQL과 k6가 필요합니다.
 
@@ -248,12 +332,14 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 
 ## 알려진 한계
 
-포트폴리오 문서가 실제보다 앞서 나가지 않도록, 현재 확인되지 않은 것을 적어 둡니다.
+문서가 실제 코드보다 앞서 나가지 않도록, 현재 확인되지 않은 것을 적어 둡니다.
 
 - **단일 인스턴스 배포입니다. 고가용성이 아닙니다.** EC2 1대이고 인스턴스가 죽으면 24.7초 멈춥니다(Docker 재시작). HTTPS·도메인·로드밸런서·CloudWatch 로그 수집이 없습니다. ([CS 12](docs/case-studies/12-cloud-operation.md))
-- **readiness/liveness 분리가 없습니다.** `/actuator/health` 하나뿐이라 '기동 중'과 'DB 장애'를 구분하지 못합니다. DB 장애 시 health 응답에 30초가 걸립니다.
-- **EC2 배포가 반자동입니다.** 이미지 빌드는 CI가 하지만 EC2 배포 단계는 SSH 수동입니다.
-- **외부 API 레이트 리미터는 JVM 안에서만 유효합니다.** 인스턴스 2개를 띄워 실측했습니다 — 각각은 5.0 req/s를 정확히 지키는데 **네이버가 받는 합산은 10.0 req/s**입니다. 다만 다중 인스턴스로 갈 때 더 급한 건 리미터가 아니라 **메모리에 있는 비밀번호 재설정 토큰·이메일 인증코드**입니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
+- **알림이 없습니다.** liveness/readiness와 배포 실패는 종료 코드·프로브로 드러나지만, 사람에게 알리는 경로가 없습니다. CloudWatch 알람이 다음 단계입니다.
+- **배포가 continuous deployment는 아닙니다.** GitHub Actions가 테스트·이미지 push까지 하고, 배포 실행은 호스트의 `nemo-deploy.sh`(readiness 확인 + 자동 rollback)가 합니다. `main` push마다 자동으로 나가지 않습니다 — 인스턴스가 평소 정지돼 있고, OIDC→SSM은 현재 IAM 권한으로 구축할 수 없습니다. ([근거](infra/deploy/README.md))
+- **zero-downtime이 아닙니다.** 포트 8080을 직접 쓰는 단일 인스턴스라 컨테이너를 교체하는 사이에 중단이 있습니다. 앞단에 Nginx/ALB를 두면 없앨 수 있지만 지금 필요하지 않은 인프라라 넣지 않았습니다.
+- **DB 마이그레이션은 rollback되지 않습니다.** Flyway가 적용한 스키마 변경은 이전 이미지로 되돌려도 그대로 남습니다. 하위 호환되지 않는 마이그레이션을 포함한 배포는 이 스크립트로 안전하게 되돌릴 수 없습니다.
+- **외부 API 레이트 리미터는 JVM 안에서만 유효합니다.** 같은 jar로 **JVM 프로세스 2개**를 띄워 실측했습니다(EC2 두 대가 아닙니다) — 각각은 5.0 req/s를 정확히 지키는데 **네이버가 받는 합산은 10.0 req/s**입니다. 다만 다중 인스턴스로 갈 때 더 급한 건 리미터가 아니라 **메모리에 있는 비밀번호 재설정 토큰·이메일 인증코드**입니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **`min-interval-ms=200`의 근거가 약합니다.** 네이버가 공표한 쿼터가 아니라 기존 코드에 있던 값을 설정으로 옮긴 것입니다. 실제 허용치 확인이 필요합니다.
 - **리미터가 보장하는 것은 장기 평균 호출률입니다.** 어떤 1초 구간에서도 5회 이하라는 strict sliding window는 보장하지 않습니다. GC·스케줄링 지연으로 호출이 뭉칠 수 있습니다. ([CS 11](docs/case-studies/11-rate-limiter-concurrency.md))
 - **기존에 쌓인 S3 고아 객체는 그대로입니다.** 이번 정합성 작업은 앞으로 생기는 것을 막을 뿐입니다. 과거 것을 찾으려면 S3 객체 목록과 DB를 대조하는 별도 작업이 필요합니다. ([CS 10](docs/case-studies/10-storage-consistency.md))
@@ -261,18 +347,16 @@ k6 run -e BASE_URL=http://localhost:8080 tools/performance/k6/baseline.js
 - **스키마 부트스트랩이 두 갈래입니다.** Flyway가 증분 마이그레이션을 맡지만 base 스키마를 만드는 마이그레이션이 없습니다. 새 DB는 base를 수동 적용한 뒤 Flyway V1이 얹힙니다.
 - **조회 성능만 측정했습니다.** 앨범·타임라인·사진 조회는 Before/After가 있지만, 업로드·QR 경로는 측정하지 않았습니다.
 - **낮은 동시성 로컬 측정입니다.** 1 VU 기준이라 최대 처리량이나 운영 지연시간을 뜻하지 않습니다.
-- **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없고 마이그레이션 도구가 아직 없습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
+- **인덱스는 근거만 확보하고 적용하지 않았습니다.** 부분·표현식 인덱스는 JPA로 표현할 수 없습니다. Flyway가 있으므로 마이그레이션으로 넣을 수는 있지만, 20만 행 측정에서 얻은 이득이 현재 데이터 규모에서 유의미한지 확인하지 않아 적용하지 않았습니다. SQL은 `tools/performance/sql/indexes.sql`에 있습니다.
 - **지도 뷰포트 1회 요청이 외부 API를 10번 부릅니다.** (실측 25 → 10) 캐시가 반복은 막아주지만 첫 요청은 여전히 1.9초입니다. 남은 9회가 키워드 검색이라, 키워드 9개가 다 필요한지를 여러 지역에서 반복 측정한 뒤 줄일 계획입니다. ([CS 05](docs/case-studies/05-map-api-cache.md))
 - **지도 캐시는 여전히 프로세스별 로컬 캐시입니다.** 크기 상한(1000 entry)과 통계는 있지만, 인스턴스가 여러 개면 캐시가 공유되지 않고 재시작하면 사라집니다. Redis는 인스턴스가 1개인 지금 도입할 근거가 없어 두었습니다.
 - **TTL 5분/30분은 최적값이 아닙니다.** 데이터 변경 특성으로 정한 초기값이고, TTL별 성능 비교는 하지 않았습니다. Grafana의 적중률·축출을 보고 조정할 값입니다. ([근거](docs/evidence/2026-08-20-map-cache-split.md))
 - **사진 업로드는 저장 한도 동시성 경로만 확인했습니다.** 실제 S3 저장·QR·친구 경로는 아직 테스트가 없습니다.
 - LocalStack과 실제 S3의 동작 차이(Content-Type, presigned URL 세부)는 실제 AWS에서 재검증이 필요합니다.
-- 배포는 Railway + Supabase 방향으로 설계했으나 상시 공개 인스턴스는 아직 없습니다.
-- **지도 API의 레이트 리미터가 동시 요청에 동작하지 않습니다.** 의도는 초당 5회인데 동시 8건이면 초당 40회가 나갑니다. 모니터링을 붙이며 발견했고 아직 고치지 않았습니다. ([CS 06](docs/case-studies/06-monitoring.md))
+- **상시 공개 인스턴스가 없습니다.** 비용 때문에 필요할 때만 켭니다. 퍼블릭 IP는 Elastic IP를 붙이지 않아 켤 때마다 바뀝니다.
 - **Flutter 정적 분석은 error만 파이프라인을 막습니다.** `info` 지적(`avoid_print` 등)이 많아 우선 error만 막고 점진적으로 줄입니다.
 - **Sentry에 접속 IP 기반 위치가 저장됩니다.** SDK에서 IP를 지워도 Sentry가 수집 시점의 접속 IP로 지역을 역산합니다. 막으려면 프로젝트 설정에서 `Prevent Storing of IP Addresses`를 켜야 합니다.
 - **Sentry 알림 규칙이 없습니다.** 어떤 이벤트에 누구에게 알릴지는 정하지 않았습니다.
 - **동시성은 사진 저장 한도만 확인했습니다.** "행 개수"나 "합계"에 대한 조건은 전부 같은 위험을 갖습니다. 전수 점검은 하지 않았습니다.
 - **사진 한도 동시성은 로컬 Docker PostgreSQL 17.10에서도 확인했습니다.** 동시 8건의 한도 보장과 잠금 대기·타임아웃·데드락 감지 동작을 검증했지만, 운영 Supabase 부하를 재현한 결과는 아닙니다. ([근거](docs/evidence/2026-08-20-postgresql-photo-quota-concurrency.md))
 - **다른 도메인에도 `IllegalStateException`이 남아 있을 수 있습니다.** 친구 도메인만 도메인 오류로 정리했습니다.
-- **배포 스텝이 없습니다.** `deploy.yml`은 배포 전 관문(테스트·secret 확인·이미지 push)까지만 있고, 실제 배포는 대상 플랫폼이 정해지면 붙입니다.

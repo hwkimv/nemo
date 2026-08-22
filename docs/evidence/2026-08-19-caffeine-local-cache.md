@@ -130,7 +130,7 @@ OFF 평균에는 반복 외부 호출뿐 아니라 `NaverApiClient`의 기존 20
 - hit/miss/eviction은 `cacheStats()`와 측정 테스트에서 확인할 수 있지만, Actuator 공개 metric으로 노출하지는 않았다.
 - 실제 Naver 지연시간, 운영 트래픽, heap 사용량은 측정하지 않았다.
 
-## 9. 포트폴리오 요약
+## 9. 요약
 
 문제
 

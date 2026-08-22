@@ -61,8 +61,8 @@ class NaverApiRateLimitTest {
      * 스레드가 GC 멈춤이나 스케줄링 지연으로 슬롯보다 <b>늦게</b> 깨어나면
      * 밀렸던 호출들이 뭉쳐서 나간다.
      *
-     * <p>실측(600ms 지연을 5개 스레드에 주입):
-     * 장기 평균 5.0 req/s인데 <b>1초 창에 9회</b>가 들어갔다.
+     * <p>실측 — 슬롯을 앞서 받은 5개 호출에 600ms 지연을 주입하면
+     * <b>1초 창에 8~9회</b>가 들어간다(목표 5회, 최소 간격 0ms, 4회 실행 관측).
      * {@code guaranteeIsLongRunAverageNotSlidingWindow()}가 이 성질을 기록한다.
      *
      * <p>구현이 보장하지 않는 것을 테스트가 단정하면 느린 머신에서 흔들린다(flaky).
@@ -76,11 +76,28 @@ class NaverApiRateLimitTest {
      * 외부 호출이 일어난 시각(ms)을 순서대로 기록하는 클라이언트를 만든다.
      */
     private static Recorded newClient() {
+        return newClient(() -> 0L);
+    }
+
+    /**
+     * @param stallMillisForThisCall 리미터가 차례를 내준 <b>뒤</b>, 실제 외부 호출이 나가기
+     *                               직전에 이 스레드를 얼마나 멈출지. 호출 스레드에서 평가된다.
+     *                               GC 멈춤·스레드 스케줄링 지연이 하는 일과 같은 자리다.
+     */
+    private static Recorded newClient(java.util.function.LongSupplier stallMillisForThisCall) {
         List<Long> callTimes = java.util.Collections.synchronizedList(new ArrayList<>());
         RestTemplate restTemplate = mock(RestTemplate.class);
 
         when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
                 .thenAnswer(invocation -> {
+                    // 지연은 슬롯을 받은 뒤에 일어나야 한다.
+                    // 호출 '전'에 자면 리미터에 늦게 도착할 뿐이라 슬롯이 그만큼 뒤로 잡히고,
+                    // 호출이 뭉치지 않는다. 재현하려는 것은 "차례는 받았는데 그 시각에
+                    // 나가지 못한" 상황이다.
+                    long stall = stallMillisForThisCall.getAsLong();
+                    if (stall > 0) {
+                        Thread.sleep(stall);
+                    }
                     callTimes.add(System.nanoTime() / 1_000_000);
                     return ResponseEntity.ok(Map.of("items", List.of()));
                 });
@@ -348,6 +365,14 @@ class NaverApiRateLimitTest {
     class GuaranteeScope {
 
         /**
+         * 슬롯을 받은 스레드가 멈추는 시간.
+         *
+         * <p>간격(200ms)보다 충분히 커야 뒤에 선 호출들과 겹친다.
+         * 600ms 면 슬롯 3칸을 건너뛰므로 뭉침이 눈에 보인다.
+         */
+        private static final long STALL_MS = 600;
+
+        /**
          * PR #16 리뷰에서 지적된 두 번째 문제.
          *
          * <p>"초당 5회 제한"이 무엇을 뜻하는지 두 가지로 갈린다.
@@ -368,23 +393,26 @@ class NaverApiRateLimitTest {
         @Test
         @DisplayName("슬롯보다 늦게 깨어나면 1초 창에 목표보다 많이 들어갈 수 있다")
         void guaranteeIsLongRunAverageNotSlidingWindow() throws Exception {
-            Recorded r = newClient();
-
             int threads = 10;
+
+            // 슬롯을 앞쪽에서 받은 절반이 멈춘다.
+            //
+            // 스레드 인덱스로 고르면 안 된다. 어느 스레드가 어느 슬롯을 받을지는
+            // CAS 경쟁 결과라 매번 달라지고, 뒤쪽 슬롯이 멈추면 그냥 더 늦게 나갈 뿐
+            // 뭉치지 않는다. 뭉침은 "앞 슬롯이 밀려 뒤 슬롯을 따라잡을 때" 생긴다.
+            // 그래서 슬롯을 받은 순서로 센다.
+            AtomicInteger slotOrder = new AtomicInteger();
+            Recorded r = newClient(() ->
+                    slotOrder.getAndIncrement() < threads / 2 ? STALL_MS : 0L);
+
             ExecutorService pool = Executors.newFixedThreadPool(threads);
             CountDownLatch go = new CountDownLatch(1);
             CountDownLatch done = new CountDownLatch(threads);
 
             for (int i = 0; i < threads; i++) {
-                final boolean stalls = i < threads / 2;
                 pool.submit(() -> {
                     try {
                         go.await();
-                        if (stalls) {
-                            // 슬롯을 잡은 직후 멈추는 상황을 흉내 낸다.
-                            // 실제로는 GC 멈춤, 스레드 스케줄링 지연, CPU 경합이 이 역할을 한다.
-                            Thread.sleep(0);
-                        }
                         r.client().searchLocal("지연" + Thread.currentThread().getId(), 5, 1, "random");
                     } catch (Exception ignored) {
                         // 이 테스트의 관심사가 아니다
@@ -393,20 +421,37 @@ class NaverApiRateLimitTest {
                     }
                 });
             }
+            long startedAt = System.nanoTime() / 1_000_000;
             go.countDown();
             assertThat(done.await(60, TimeUnit.SECONDS)).isTrue();
+            long elapsedMs = System.nanoTime() / 1_000_000 - startedAt;
             pool.shutdownNow();
 
-            // 보장하는 것: 장기 평균
-            assertThat(r.observedRatePerSecond())
-                    .as("장기 평균은 목표 근처를 유지해야 한다. 이건 보장한다")
-                    .isLessThanOrEqualTo(TARGET_RPS * RATE_TOLERANCE);
+            // ── 보장하는 것: 리미터가 차례를 실제로 벌려 놓았다 ──
+            //
+            // ⚠️ 여기서 observedRatePerSecond() 를 단정하면 안 된다.
+            //    그 값은 "첫 호출부터 마지막 호출까지"로 나눈다. 그런데 이 테스트는
+            //    일부러 <b>앞쪽 슬롯을 늦추므로</b> 첫 호출 시각이 뒤로 밀려 구간이 짧아진다.
+            //    즉 지연을 주입할수록 관측 평균이 <b>올라간다</b> — 리미터가 나빠져서가
+            //    아니라 재는 구간이 줄어서다. 측정 도구가 조건에 오염된 경우다.
+            //
+            // 지연과 무관하게 참인 것은 이것이다: 슬롯 n 개를 내주려면
+            // 최소 (n-1) × 간격 만큼의 시간이 흘러야 한다. 지연은 이 값을 늘릴 뿐
+            // 줄이지 못한다. 리미터가 고장나면(동시 요청에서 전부 통과) 이 값이 무너진다.
+            long minimumPossibleMs = (long) ((threads - 1) * MIN_INTERVAL_MS * 0.9);
+            assertThat(elapsedMs)
+                    .as("슬롯 %d개를 내주려면 최소 (n-1)×%dms 가 걸린다. 이건 지연과 무관하게 보장한다",
+                            threads, MIN_INTERVAL_MS)
+                    .isGreaterThanOrEqualTo(minimumPossibleMs);
 
-            // 보장하지 않는 것: 모든 1초 창
-            // 단정하지 않고 기록만 한다. 환경에 따라 5가 될 수도, 9가 될 수도 있다.
+            assertThat(r.callTimes()).hasSize(threads);
+
+            // ── 보장하지 않는 것: 모든 1초 창 ──
+            // 단정하지 않고 기록만 한다. 실측(600ms 지연을 앞선 슬롯 5개에 주입):
+            // 1초 창 최댓값 8회, 최소 간격 0ms. 목표는 5회다.
             System.out.printf(
-                    "[보장 범위 기록] 장기 평균 %.1f req/s · 1초 창 최댓값 %d회 · 최소 간격 %dms%n",
-                    r.observedRatePerSecond(), r.maxCallsInAnyOneSecond(), r.minGap());
+                    "[보장 범위 기록] 총 %dms · 1초 창 최댓값 %d회 · 최소 간격 %dms · 관측 평균 %.1f req/s(구간 오염됨)%n",
+                    elapsedMs, r.maxCallsInAnyOneSecond(), r.minGap(), r.observedRatePerSecond());
         }
     }
 

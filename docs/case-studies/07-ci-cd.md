@@ -248,7 +248,11 @@ management.health.mail.enabled: false
 
 - **브랜치 보호 규칙은 저장소 설정이라 코드로 넣을 수 없습니다.**
   `main`에 대해 `backend-test` 통과를 필수로 지정해야 관문이 실제로 강제됩니다.
-- **배포 스텝이 없습니다.** 대상 플랫폼이 정해지면 `deploy.yml`의 `push-image` 뒤에 붙입니다.
+- **CI 자체는 배포하지 않습니다.** 이 문서를 쓸 당시에는 배포 대상 자체가 없었습니다.
+  지금은 `deploy.yml`이 테스트·이미지 push 까지 하고, EC2 호스트의 `nemo-deploy.sh`가
+  배포·readiness 확인·실패 시 rollback 을 맡습니다. GitHub Actions 가 EC2 에
+  직접 접속하지 않는 이유는 [배포 문서](../../infra/deploy/README.md)에 실측 근거와 함께 있습니다.
+  ([CS 12](12-cloud-operation.md))
 - **Flutter analyze는 `--no-fatal-warnings`입니다.** 경고가 많을 수 있어 우선 오류만 막습니다.
   경고까지 막으려면 플래그를 빼면 됩니다.
 - **통합 테스트가 H2 기준입니다.** CI에 PostgreSQL 서비스 컨테이너를 붙이면
