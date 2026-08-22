@@ -13,7 +13,7 @@ date: 2026-08-21
 | **기간** | 2026-08-21 |
 | **범위** | Backend — `NaverApiClient` 외부 호출 속도 제한 |
 | **결과** | 동시 16건 **74.0 → 5.0 req/s** (기존 설정값 기준 목표 5.0) |
-| **증거** | `NaverApiRateLimitTest` (15), `rateLimitMeasurement` 태스크 |
+| **증거** | `NaverApiRateLimitTest` (12), `rateLimitMeasurement` 태스크 |
 | **추가 의존성** | **없음** |
 
 ---
@@ -82,7 +82,7 @@ date: 2026-08-21
 
 ## 원인
 
-문제의 코드는 세 줄입니다. (`NaverApiClient.java:403`, 수정 전)
+문제의 코드는 세 줄입니다. (`NaverApiClient.enforceMinInterval()`, 수정 전)
 
 ```java
 private void enforceMinInterval() {
@@ -158,7 +158,7 @@ for (int attempt = 1; attempt <= 3; attempt++) {
 `synchronized`는 그 대기가 **인터럽트 불가**라 요청 취소도 안 됩니다.
 
 **3번 (CAS)** — 이미 쓰고 있는 `AtomicLong`을 **올바르게** 쓰는 것입니다.
-`updateAndGet`으로 자기 차례를 원자적으로 예약한 뒤 **락 없이** 잡니다.
+자기 차례를 원자적으로 예약한 뒤 **락 없이** 잡니다.
 각 스레드가 자기 대기 시간을 미리 알게 되므로 timeout·interrupt를 붙이기 쉽습니다.
 
 **4·5번 (라이브러리)** — 검증된 구현이고 지표 연동도 있습니다.
@@ -193,27 +193,40 @@ Bucket4j의 burst 허용은 네이버 쿼터 정책을 모르는 상태에서 **
 
 ## 구현
 
+**최종 구현입니다.** 여기 오기까지 한 번 고쳤고, 그 과정은 바로 아래에 있습니다.
+
 ```java
 private void enforceMinInterval() {
     final long now = System.nanoTime();
     final long intervalNanos = minIntervalMs * 1_000_000L;
+    final long maxWaitNanos  = maxWaitMs * 1_000_000L;
 
-    // 내 차례를 예약한다. 이 한 줄이 원자적이라는 것이 이 구현의 전부다.
-    long mySlotNanos =
-        nextSlotAtNanos.updateAndGet(prev -> Math.max(now, prev) + intervalNanos) - intervalNanos;
+    long waitNanos;
+    while (true) {
+        long prev = nextSlotAtNanos.get();
+        // Math.max로 과거를 끌어올린다. 없으면 한동안 호출이 없었을 때 버스트가 난다.
+        long mySlot = Math.max(now, prev);
+        waitNanos = mySlot - now;
 
-    long waitMs = (mySlotNanos - now) / 1_000_000L;
-    if (waitMs <= 0) return;
-
-    if (waitMs > maxWaitMs) {
-        rateLimitRejections.increment();
-        throw new ApiException(ErrorCode.RATE_LIMITED, "...");   // 429
+        if (waitNanos > maxWaitNanos) {
+            rateLimitRejections.increment();
+            // ★ 예약하지 않고 거절한다. 이 요청은 차례를 소비하지 않는다.
+            throw new ApiException(ErrorCode.RATE_LIMITED, "...");
+        }
+        if (nextSlotAtNanos.compareAndSet(prev, mySlot + intervalNanos)) {
+            break;                 // 내 차례를 확보했다
+        }
+        Thread.onSpinWait();       // 다른 스레드가 먼저 예약했다. 다시 읽고 재시도.
     }
+
+    long waitMs = waitNanos / 1_000_000L;
+    if (waitMs <= 0) return;       // 내 차례가 이미 지났다
+
     rateLimitWaitTimer.record(waitMs, MILLISECONDS);
     try {
-        Thread.sleep(waitMs);
+        Thread.sleep(waitMs);      // 락을 쥐지 않은 채로 잔다
     } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();      // 플래그를 되살린다
+        Thread.currentThread().interrupt();   // 플래그를 되살린다
         throw new ApiException(ErrorCode.RATE_LIMITED, "...");
     }
 }
@@ -221,28 +234,42 @@ private void enforceMinInterval() {
 
 ### 왜 이게 되는가
 
-| 스레드 | `prev` | 예약 결과 | 내 차례 |
+CAS가 **성공해야만** 차례를 차지합니다. 두 스레드가 같은 `prev`를 읽어도
+하나만 성공하고, 진 쪽은 새 값을 읽고 다시 줄을 섭니다.
+
+| 스레드 | 읽은 `prev` | 확보한 차례 | 다음 예약값 |
 |---|---|---|---|
-| A | 0 | `max(now, 0) + 200` | **now** (바로) |
-| B | now+200 | `max(now, now+200) + 200` | **now+200** |
-| C | now+400 | `... + 200` | **now+400** |
+| A | now | **now** (바로) | now+200 |
+| B | now+200 | **now+200** | now+400 |
+| C | now+400 | **now+400** | now+600 |
 
-`updateAndGet`은 **실패하면 다시 시도하는 CAS 루프**입니다.
-읽기·계산·쓰기가 한 덩어리로 원자적이라 **두 스레드가 같은 차례를 받을 수 없습니다.**
-
-### `currentTimeMillis`가 아니라 `nanoTime`
-
-벽시계는 NTP 보정으로 **뒤로 점프할 수 있습니다.**
-그러면 이미 예약된 차례가 갑자기 먼 미래가 되어 모든 요청이 길게 멈춥니다.
-`nanoTime`은 단조 증가라 그런 일이 없습니다.
-여기서 필요한 것은 "지금 몇 시인가"가 아니라 **"얼마나 지났는가"** 입니다.
+`sleep`은 **CAS 밖에서** 합니다. 자는 동안 아무 락도 쥐지 않으므로
+뒤따라오는 스레드가 그 사이에 자기 차례를 예약할 수 있습니다.
+락 방식(1·2번)과 갈리는 지점이 여기입니다.
 
 ### 거절된 요청은 차례를 소비하지 않습니다 (리뷰 지적으로 수정)
 
-처음 구현은 `updateAndGet`으로 **무조건** 슬롯을 예약한 뒤, 대기가 상한을 넘으면 거절했습니다.
-그때 코드 주석에 "빈 슬롯 하나가 생길 뿐이라 안전한 방향"이라고 적었는데 **틀렸습니다.**
+**처음 구현은 이게 아니었습니다.** `updateAndGet` 한 줄로 예약했습니다.
 
-PR 리뷰에서 이 부분을 지적받아 재현해 봤습니다.
+```java
+// 수정 전 — 무조건 예약한 뒤 상한을 넘으면 거절
+long mySlotNanos =
+    nextSlotAtNanos.updateAndGet(prev -> Math.max(now, prev) + intervalNanos) - intervalNanos;
+
+long waitMs = (mySlotNanos - now) / 1_000_000L;
+if (waitMs > maxWaitMs) {
+    rateLimitRejections.increment();
+    throw new ApiException(ErrorCode.RATE_LIMITED, "...");   // ← 이미 예약한 뒤다
+}
+```
+
+`updateAndGet`도 내부적으로는 CAS 루프라 **동시성은 안전합니다.**
+문제는 다른 데 있었습니다 — **"무조건 갱신"이라 조건을 끼워 넣을 수 없습니다.**
+그래서 거절할 요청까지 슬롯을 예약해 버렸습니다.
+외부 API를 부르지도 않으면서 차례만 미래로 밀어 놓는 **유령 슬롯**입니다.
+
+그때 코드 주석에 "빈 슬롯 하나가 생길 뿐이라 안전한 방향"이라고 적어 뒀는데
+**틀렸습니다.** PR 리뷰에서 지적받아 재현했습니다.
 
 ```
 상한 1s · 간격 200ms · 요청 20건 동시
@@ -257,26 +284,16 @@ PR 리뷰에서 이 부분을 지적받아 재현해 봤습니다.
 **아무도 네이버를 부르지 않는데 사용자만 429를 받는 상태**가 됩니다.
 거절이 쌓일수록 차례가 계속 미래로 밀려 정상 요청까지 연쇄로 막힙니다.
 
-`updateAndGet`은 "무조건 갱신"이라 조건을 끼워 넣을 수 없습니다.
-`compareAndSet` 루프를 직접 써서 **상한을 넘으면 CAS를 하지 않고** 빠져나가게 고쳤습니다.
-
-```java
-while (true) {
-    long prev = nextSlotAtNanos.get();
-    long mySlot = Math.max(now, prev);
-    waitNanos = mySlot - now;
-
-    if (waitNanos > maxWaitNanos) {
-        rateLimitRejections.increment();
-        throw new ApiException(ErrorCode.RATE_LIMITED, "...");   // 예약하지 않고 거절
-    }
-    if (nextSlotAtNanos.compareAndSet(prev, mySlot + intervalNanos)) break;
-    Thread.onSpinWait();   // 다른 스레드가 먼저 예약했다. 다시 읽고 재시도.
-}
-```
-
-CAS가 성공해야만 차례를 차지하므로 동시 요청에서도 경쟁 조건이 없습니다.
+`compareAndSet` 루프를 직접 쓰면 **거절 조건을 예약 전에 판정**할 수 있습니다.
+상한을 넘으면 CAS를 아예 실행하지 않고 빠져나갑니다.
 회귀 테스트 3개로 고정했고, **수정 전 코드에서는 셋 다 실패**합니다.
+
+### `currentTimeMillis`가 아니라 `nanoTime`
+
+벽시계는 NTP 보정으로 **뒤로 점프할 수 있습니다.**
+그러면 이미 예약된 차례가 갑자기 먼 미래가 되어 모든 요청이 길게 멈춥니다.
+`nanoTime`은 단조 증가라 그런 일이 없습니다.
+여기서 필요한 것은 "지금 몇 시인가"가 아니라 **"얼마나 지났는가"** 입니다.
 
 ---
 
@@ -332,13 +349,26 @@ B. 어떤 연속된 1초 구간에서도 호출 ≤ 5
 스레드가 GC 멈춤이나 스케줄링 지연으로 슬롯보다 **늦게** 깨어나면
 밀렸던 호출들이 뭉쳐서 나갑니다.
 
-실측 — 스레드 10개 중 5개에 600ms 지연을 주입:
+실측 — **슬롯을 앞서 받은 호출 5개**에 600ms 지연을 주입(스레드 10개, 4회 실행):
 
 | 항목 | 값 |
 |---|---|
-| 장기 평균 | **5.0 req/s** ✅ |
-| **1초 창 최댓값** | **9회** ❌ |
-| 최소 간격 | 1ms |
+| 슬롯 10개를 내주는 데 걸린 시간 | **1,801ms** (= (10−1) × 200ms. 리미터는 제 일을 했습니다) |
+| **1초 창 최댓값** | **8~9회** ❌ (목표 5회) |
+| 최소 간격 | **0ms** |
+
+> **지연 대상을 스레드 인덱스가 아니라 "슬롯을 받은 순서"로 고르는 것이 중요합니다.**
+> 어느 스레드가 어느 슬롯을 받을지는 CAS 경쟁 결과라 매번 다릅니다.
+> 뒤쪽 슬롯이 밀리면 그냥 더 늦게 나갈 뿐이고, 뭉침은
+> **앞 슬롯이 밀려 뒤 슬롯을 따라잡을 때** 생깁니다.
+> 지연 지점도 **슬롯을 받은 뒤**여야 합니다 — 호출 전에 자면 리미터에 늦게 도착할 뿐입니다.
+>
+> 그리고 이 조건에서는 **관측 평균(rps)을 판정에 쓸 수 없습니다.**
+> 그 값은 첫 호출~마지막 호출 구간으로 나누는데, 앞쪽을 늦추면 구간이 짧아져
+> **지연을 줄수록 평균이 올라갑니다.** 측정 도구가 조건에 오염된 경우입니다.
+> 그래서 지연과 무관하게 참인 것 — 슬롯 n개를 내주려면 최소 (n−1)×간격이 걸린다 —
+> 으로 단정을 바꿨습니다. 리미터를 no-op으로 만들면 이 단정이 실제로 실패합니다
+> (12개 중 10개 실패 확인).
 
 ### 그래서 무엇을 했나
 
@@ -386,7 +416,7 @@ B. 어떤 연속된 1초 구간에서도 호출 ≤ 5
               └ MISS ─→ 리미터 → 네이버 API → 캐시 저장
 ```
 
-코드로 확인했습니다 (`NaverApiClient.java` 249~276행).
+코드로 확인했습니다 — `searchLocal()`에서 캐시 조회가 `enforceMinInterval()`보다 앞에 있습니다.
 **이미 올바른 순서**라 바꾸지 않았습니다.
 리미터는 **외부로 나가는 호출만** 제한해야 합니다.
 캐시 hit까지 기다리게 하면 아무것도 얻지 못하고 응답만 느려집니다.
@@ -398,7 +428,7 @@ B. 어떤 연속된 1초 구간에서도 호출 ≤ 5
 
 ## 테스트
 
-**185개 전체 통과** (173 → +12)
+**192개 전체 통과 · 실패·오류·skip 0**
 
 | 묶음 | 테스트 |
 |---|---|
@@ -434,9 +464,20 @@ B. 어떤 연속된 1초 구간에서도 호출 ≤ 5
 그래서 **슬라이딩 1초 창**으로 바꿨습니다.
 
 > "초당 5회"는 "연속한 두 호출이 200ms 떨어져 있어야 한다"가 아니라
-> **"어떤 1초를 잘라도 5회를 넘지 않아야 한다"** 는 뜻입니다.
+> **"어떤 1초를 잘라도 5회를 넘지 않아야 한다"** 는 뜻이라고 생각했습니다.
 
-쿼터가 실제로 요구하는 성질을 재는 쪽이 맞고, 흔들리지도 않습니다.
+**이것도 틀렸습니다.** PR 리뷰에서 잡혔습니다 —
+*구현은 장기 평균만 보장하는데 테스트는 슬라이딩 윈도우를 단정하고 있다.*
+
+맞는 지적이었습니다. 슬라이딩 창은 **쿼터가 요구하는 성질**일 수는 있어도
+**이 구현이 보장하는 성질**은 아닙니다. 보장하지 않는 것을 단정하면
+느린 머신에서 흔들립니다(flaky).
+
+> **최종 상태** — 판별 기준은 **장기 평균**(`RATE_TOLERANCE = 1.5`)이고,
+> 슬라이딩 창은 단정이 아니라 **기록**으로만 남깁니다.
+> 위 [이 구현이 보장하는 범위](#이-구현이-보장하는-범위-리뷰-지적으로-명확화) 참고.
+
+기준을 두 번 고쳐서야 구현이 실제로 보장하는 것에 닿았습니다.
 
 ---
 
@@ -498,7 +539,7 @@ AWS 배포를 준비하며 저장소를 훑다가 더 심각한 것을 찾았습
 
 | 위치 | 문제 |
 |---|---|
-| `NaverApiClient:218` `nextSlotAtNanos` | 리미터 — 쿼터를 넘길 수 있음 |
+| `NaverApiClient` `nextSlotAtNanos` 필드 | 리미터 — 쿼터를 넘길 수 있음 |
 | `NaverResponseCache` | 캐시 — 인스턴스마다 따로 채움 (비효율일 뿐) |
 | **`PasswordResetService:56`** `resetTokens` | **비밀번호 재설정 토큰이 메모리에.** A 에서 발급 → B 로 라우팅되면 "토큰 없음" |
 | **`EmailVerificationService:27`** `verificationCodes` | **이메일 인증코드가 메모리에.** 같은 문제 |
@@ -517,7 +558,7 @@ AWS 배포를 준비하며 저장소를 훑다가 더 심각한 것을 찾았습
   기존 코드에 있던 값을 설정으로 옮긴 것입니다. 실제 허용치 확인이 필요합니다.
 - **Local Search와 Reverse Geocoding이 리미터를 공유합니다.** 위 참고.
 - **큐·백프레셔가 없습니다.** 상한을 넘으면 즉시 거절할 뿐, 대기열 크기를 관리하지 않습니다.
-- **거절이 실제 트래픽에서 얼마나 나는지 모릅니다.** 아직 배포 전입니다.
+- **거절이 실제 트래픽에서 얼마나 나는지 모릅니다.** 배포는 했지만 실사용 트래픽이 없습니다.
 - **거절에 대한 알림 규칙이 없습니다.**
 
 ---
@@ -567,7 +608,7 @@ AWS 배포를 준비하며 저장소를 훑다가 더 심각한 것을 찾았습
 
 | 단계 | 내용 |
 |---|---|
-| 코드 탐색 | `NaverApiClient.java:403`의 read→sleep→write 구조 확인, 캐시-리미터 순서 확인 |
+| 코드 탐색 | `NaverApiClient.enforceMinInterval()`의 read→sleep→write 구조 확인, 캐시-리미터 순서 확인 |
 | 실패 재현 | 결정적 동시성 테스트 작성, 동시성별 측정 하네스 구현 |
 | 대안 비교 | 6개 후보를 10개 기준으로 비교 |
 | 구현 | CAS 슬롯 예약 + nanoTime + 대기 정책 |
@@ -602,7 +643,7 @@ AWS 배포를 준비하며 저장소를 훑다가 더 심각한 것을 찾았습
 ## 참고
 
 - 구현: `NaverApiClient.java` `enforceMinInterval()`
-- 테스트: `NaverApiRateLimitTest` (11)
+- 테스트: `NaverApiRateLimitTest` (12)
 - 측정: `./gradlew rateLimitMeasurement`
 - 관련: [CS 06 — 지표를 붙이고 나서 알게 된 것](06-monitoring.md) (문제를 처음 발견),
   [CS 05 — 지도 API 캐시가 가리고 있던 것](05-map-api-cache.md) (호출 수 감축)
