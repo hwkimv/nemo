@@ -13,6 +13,30 @@ spring:
     url: ${DB_URL}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
+    hikari:
+      # =============================
+      # 왜 30초가 아니라 5초인가
+      # =============================
+      # readiness 프로브는 커넥션을 하나 빌려 검사한다. 그래서 이 값이
+      # "DB 가 죽었을 때 readiness 가 DOWN 을 답하는 데 걸리는 시간"을 그대로 결정한다.
+      #
+      # 실측(2026-08-22, EC2 에서 pooler IP 5432 를 DROP):
+      #   connection-timeout 기본값 30초 → /readyz 가 503 을 주는 데 30.1초
+      #
+      # 로드밸런서의 health check 타임아웃은 보통 5~10초다. 30초가 걸리면
+      # LB 입장에서 "응답 없음"과 "DOWN 응답"이 구분되지 않는다.
+      # 지금은 LB 가 없어 피해가 없지만, 붙이는 순간 문제가 된다.
+      #
+      # 사용자 쪽에서도 같은 이야기다. DB 가 죽었을 때 30초를 기다렸다가
+      # 500 을 받는 것보다 5초에 받는 편이 낫다. 어차피 결과는 실패다.
+      #
+      # 대가: 풀이 포화됐을 때도 5초에 실패한다. 커넥션을 오래 기다려서라도
+      # 성공시키고 싶은 요청이 있다면 이 값이 짧아 손해다.
+      # 현재 트래픽에서는 풀 포화가 관측된 적이 없어 이쪽을 택했다.
+      # 포화가 실제로 관측되면 재검토할 값이다.
+      connection-timeout: 5000
+      # Hikari 는 validation-timeout 이 connection-timeout 보다 크면 거부한다.
+      validation-timeout: 3000
   flyway:
     enabled: true
     baseline-on-migrate: true
