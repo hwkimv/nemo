@@ -116,7 +116,8 @@ PR
 |---|---|
 | [analyze-problem.md](../prompts/engineering/analyze-problem.md) | 1~2단계. 읽고 재현만. **고치지 않는다** |
 | [implement-fix.md](../prompts/engineering/implement-fix.md) | 3~6단계. 대안 비교 → 최소 복잡도 구현 |
-| [review-pr.md](../prompts/engineering/review-pr.md) | 8단계. 별도 세션에서 공격적 검토 |
+| [review-pr.md](../prompts/engineering/review-pr.md) | 8단계. 별도 세션에서 **코드**를 공격적으로 검토 |
+| [review-deployment.md](../prompts/engineering/review-deployment.md) | 8단계. 배포·인프라 작업용. 코드가 아니라 **"측정했다·안전하다·비용이 얼마다"라는 주장**을 공격 |
 
 ---
 
@@ -124,5 +125,7 @@ PR
 
 - **1인 프로젝트 기준입니다.** 여러 사람이 붙었을 때의 조율은 다뤄지지 않았습니다.
 - **독립 리뷰가 자동화돼 있지 않습니다.** 프롬프트를 사람이 다른 세션에 붙여넣습니다.
-- **사례가 아직 적습니다.** 이 문서는 레이트 리미터 작업 하나로 정리한 것이고,
+- **사례가 아직 적습니다.** 이 문서는 레이트 리미터 작업으로 정리하고 AWS 배포 작업([CS 12](case-studies/12-cloud-operation.md))에 한 번 더 적용한 것입니다.
   다른 유형(예: UI, 데이터 마이그레이션)에서도 맞는지는 확인하지 않았습니다.
+- **배포 작업에서 8단계 리뷰가 실제로 6건을 잡았습니다.** 그중 3건이 머지 차단급이었고,
+  1건은 **문서만 고치고 파일은 안 고친 것**이었습니다. 구현한 세션은 그걸 "고쳤다"고 적고 있었습니다.

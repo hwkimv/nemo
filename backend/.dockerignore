@@ -7,3 +7,26 @@ out
 *.iml
 *.log
 node_modules
+
+# ── 비밀값 ─────────────────────────────────────────────
+# Dockerfile 이 `COPY . .` 로 빌드 컨텍스트 전체를 복사한다.
+# 로컬에서 이미지를 만들면 backend/.env 가 통째로 들어간다.
+#
+# 지금 GHCR 에 올라간 이미지는 GitHub Actions 가 만든 것이라 안전하다.
+# .env 가 .gitignore 에 있어 체크아웃에 애초에 없기 때문이다.
+# 하지만 로컬 빌드는 그 보호를 받지 못한다. 여기서 막는다.
+#
+# 멀티스테이지라 최종 이미지에는 jar 만 들어가지만,
+# builder 스테이지 레이어에는 남는다. 그 레이어는
+# `cache-to: type=gha,mode=max` 로 캐시에 올라간다.
+.env
+.env.*
+!.env.example
+
+# 키 파일이 컨텍스트에 섞여 들어오는 것도 막는다
+*.pem
+*.key
+*.p12
+*.jks
+id_rsa*
+

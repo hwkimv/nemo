@@ -36,6 +36,10 @@ class NaverApiClientContextTest {
         assertThat(naverApiClient).isNotNull();
     }
 
+    // 지도 키 없이 기동하는 동작은 NaverApiClientNoCredentialsTest 가 검증한다.
+    // 여기에도 같은 이름의 테스트를 뒀었는데, 이 클래스는 @TestPropertySource 로
+    // 키를 넣어 주므로 이름과 실제로 검사하는 것이 달랐다. 지웠다.
+
     @Test
     void springWiresTwoIndependentCaches() {
         assertThat(naverApiClient.localSearchCache().ttlSeconds()).isEqualTo(300);

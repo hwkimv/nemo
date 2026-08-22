@@ -84,7 +84,7 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform {
-		excludeTags 'performance', 'map-cache-performance', 'rate-limit-measurement', 'postgres-concurrency'
+		excludeTags 'performance', 'map-cache-performance', 'rate-limit-measurement', 'schema-export', 'postgres-concurrency'
 	}
 }
 
@@ -138,4 +138,16 @@ tasks.register('rateLimitMeasurement', Test) {
 		showStandardStreams = true
 	}
 	shouldRunAfter tasks.named('test')
+}
+
+tasks.register('exportPostgresSchema', Test) {
+	description = 'Generates PostgreSQL DDL from JPA entities (no live DB needed).'
+	group = 'documentation'
+	useJUnitPlatform {
+		includeTags 'schema-export'
+	}
+	testLogging {
+		events 'passed', 'failed'
+		showStandardStreams = true
+	}
 }

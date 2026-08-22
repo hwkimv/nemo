@@ -36,8 +36,11 @@ app:
     bucket: ${AWS_S3_BUCKET:nemo-s3-prod}
     region: ${AWS_REGION:ap-northeast-2}
     endpoint: ""                    # AWS니까 endpoint 없음
-    accessKey: ${AWS_ACCESS_KEY}
-    secretKey: ${AWS_SECRET_KEY}
+    # 비워 두면 IAM Role(EC2 인스턴스 프로파일 / ECS TaskRole)에서 자격증명을 받는다.
+    # 장기 Access Key는 한 번 새면 직접 폐기하기 전까지 계속 유효하다.
+    # IAM Role은 수 시간마다 자동으로 도는 임시 자격증명을 준다.
+    accessKey: ${AWS_ACCESS_KEY:}
+    secretKey: ${AWS_SECRET_KEY:}
     pathStyle: false
     createBucketIfMissing: false
 
